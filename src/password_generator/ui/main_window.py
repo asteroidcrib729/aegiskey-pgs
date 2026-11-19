@@ -1,6 +1,7 @@
 """Main high-DPI Tkinter workstation window for cryptographic secret generation and auditing."""
 
 import tkinter as tk
+from contextlib import suppress
 from functools import partial
 from tkinter import ttk
 
@@ -34,6 +35,7 @@ from password_generator.services.clipboard import ClipboardService
 from password_generator.services.history import SessionVaultService
 from password_generator.services.settings_store import AppPreferences, SettingsStore
 from password_generator.ui.dpi import apply_windows_titlebar_theme, configure_tk_scaling
+from password_generator.ui.icons import UiIconSet, build_ui_icons, create_app_icon
 from password_generator.ui.theme import (
     FontSet,
     ThemeMode,
@@ -42,7 +44,12 @@ from password_generator.ui.theme import (
     get_palette,
     resolve_fonts,
 )
-from password_generator.ui.widgets import SessionVaultPanel, StrengthMeterCanvas, ToggleSwitch
+from password_generator.ui.widgets import (
+    SessionVaultPanel,
+    StrengthMeterCanvas,
+    ToggleSwitch,
+    TouchpadScrollableFrame,
+)
 
 _SEPARATOR_OPTIONS: dict[str, str] = {
     "Hyphen (-)": "-",
@@ -99,8 +106,12 @@ class PasswordGeneratorWindow:
         self._suppress_edit_trace = False
         self._suppress_policy_regeneration = False
         self._vault_record_after_id: str | None = None
+        self._wrap_after_id: str | None = None
+        self._last_audit_wrap: int = self._px(360)
         self._last_generated: GeneratedSecret | None = None
         self._batch_items: list[GeneratedSecret] = []
+        self._app_icon: tk.PhotoImage | None = None
+        self._icons: UiIconSet | None = None
 
         # Registered theme-aware surfaces & widgets updated dynamically on theme toggle.
         self._bordered_cards: list[tk.Frame] = []
@@ -116,6 +127,15 @@ class PasswordGeneratorWindow:
 
         initial_preset = get_preset_by_key(self._prefs.last_preset_key) or SECURITY_PRESETS[0]
         self._apply_preset(initial_preset, generate=True)
+
+    def present(self) -> None:
+        """Finalize layout and reveal the window cleanly without startup flash or artifacts."""
+        self.root.update_idletasks()
+        self.root.deiconify()
+        apply_windows_titlebar_theme(self.root, dark=(self._theme_mode == "dark"))
+        self.root.update_idletasks()
+        with suppress(tk.TclError):
+            self.root.attributes("-alpha", 1.0)
 
     def _init_variables(self) -> None:
         self._active_mode = GenerationMode.PASSWORD
@@ -167,17 +187,22 @@ class PasswordGeneratorWindow:
                 return label
         return "30 sec"
 
+    def _px(self, logical: float) -> int:
+        return max(1, round(logical * self._scale))
+
     def _configure_root_window(self) -> None:
         self.root.title("AegisKey · Secure Password Generator Studio")
-        width = round(1140 * min(self._scale, 1.35))
-        height = round(790 * min(self._scale, 1.35))
-        min_w = round(940 * min(self._scale, 1.25))
-        min_h = round(680 * min(self._scale, 1.25))
+        self.root.configure(bg=self._palette.bg_app)
+        with suppress(tk.TclError):
+            self._app_icon = create_app_icon(scale=self._scale)
+            self.root.iconphoto(True, self._app_icon)
 
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
-        width = min(width, max(min_w, screen_w - 80))
-        height = min(height, max(min_h, screen_h - 90))
+        min_w = min(self._px(740), max(600, screen_w - self._px(40)))
+        min_h = min(self._px(480), max(440, screen_h - self._px(60)))
+        width = min(self._px(1140), max(min_w, screen_w - self._px(48)))
+        height = min(self._px(660), max(min_h, screen_h - self._px(64)))
         pos_x = max(0, (screen_w - width) // 2)
         pos_y = max(0, (screen_h - height) // 2)
 
@@ -189,7 +214,11 @@ class PasswordGeneratorWindow:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        self._outer = ttk.Frame(self.root, style="App.TFrame", padding=(18, 14, 18, 16))
+        self._outer = ttk.Frame(
+            self.root,
+            style="App.TFrame",
+            padding=(self._px(16), self._px(11), self._px(16), self._px(12)),
+        )
         self._outer.grid(row=0, column=0, sticky="nsew")
         self._outer.columnconfigure(0, weight=1)
         self._outer.rowconfigure(2, weight=1)
@@ -198,7 +227,7 @@ class PasswordGeneratorWindow:
         self._build_hero_card(self._outer)
 
         body = ttk.Frame(self._outer, style="App.TFrame")
-        body.grid(row=2, column=0, sticky="nsew", pady=(12, 0))
+        body.grid(row=2, column=0, sticky="nsew", pady=(self._px(10), 0))
         body.columnconfigure(0, weight=5, uniform="cols")
         body.columnconfigure(1, weight=6, uniform="cols")
         body.rowconfigure(0, weight=1)
@@ -210,11 +239,13 @@ class PasswordGeneratorWindow:
         self,
         parent: tk.Misc,
         *,
-        padding: tuple[int, int] = (14, 12),
+        padding: tuple[int, int] | None = None,
     ) -> tuple[tk.Frame, ttk.Frame]:
+        # Match bg to card interior so live resize invalidations never flash border color.
+        resolved_pad = padding if padding is not None else (self._px(13), self._px(10))
         border_frame = tk.Frame(
             parent,
-            bg=self._palette.border,
+            bg=self._palette.bg_surface,
             highlightthickness=1,
             highlightbackground=self._palette.border,
             bd=0,
@@ -223,7 +254,7 @@ class PasswordGeneratorWindow:
         border_frame.rowconfigure(0, weight=1)
         self._bordered_cards.append(border_frame)
 
-        inner = ttk.Frame(border_frame, style="Card.TFrame", padding=padding)
+        inner = ttk.Frame(border_frame, style="Card.TFrame", padding=resolved_pad)
         inner.grid(row=0, column=0, sticky="nsew")
         return border_frame, inner
 
@@ -267,12 +298,13 @@ class PasswordGeneratorWindow:
         )
         self._theme_btn.grid(row=0, column=2, padx=(0, 6))
 
-        ttk.Button(
+        self._help_btn = ttk.Button(
             right,
             text="Shortcuts (F1)",
             style="Secondary.TButton",
             command=self._show_help_dialog,
-        ).grid(row=0, column=3)
+        )
+        self._help_btn.grid(row=0, column=3)
 
     def _build_hero_card(self, parent: ttk.Frame) -> None:
         card_border, card = self._create_card(parent, padding=(16, 14))
@@ -313,7 +345,7 @@ class PasswordGeneratorWindow:
 
         self._secret_entry_border = tk.Frame(
             secret_row,
-            bg=self._palette.border,
+            bg=self._palette.bg_input,
             highlightthickness=1,
             highlightbackground=self._palette.border,
             bd=0,
@@ -329,7 +361,7 @@ class PasswordGeneratorWindow:
             fg=self._palette.text_primary,
             insertbackground=self._palette.text_primary,
             relief="flat",
-            bd=8,
+            bd=self._px(6),
             show="•" if self._masked_var.get() else "",
         )
         self._secret_entry.grid(row=0, column=0, sticky="ew")
@@ -339,19 +371,21 @@ class PasswordGeneratorWindow:
         actions = ttk.Frame(secret_row, style="Card.TFrame")
         actions.grid(row=0, column=1, sticky="e")
 
-        ttk.Button(
+        self._generate_btn = ttk.Button(
             actions,
             text="Generate",
             style="Primary.TButton",
             command=self.generate_current,
-        ).grid(row=0, column=0, padx=(0, 6))
+        )
+        self._generate_btn.grid(row=0, column=0, padx=(0, 6))
 
-        ttk.Button(
+        self._copy_btn = ttk.Button(
             actions,
             text="Copy",
             style="Primary.TButton",
             command=self.copy_current_secret,
-        ).grid(row=0, column=1, padx=(0, 6))
+        )
+        self._copy_btn.grid(row=0, column=1, padx=(0, 6))
 
         self._mask_btn = ttk.Button(
             actions,
@@ -361,12 +395,13 @@ class PasswordGeneratorWindow:
         )
         self._mask_btn.grid(row=0, column=2, padx=(0, 6))
 
-        ttk.Button(
+        self._batch_btn = ttk.Button(
             actions,
             text="5x Batch",
             style="Secondary.TButton",
             command=self.generate_batch_candidates,
-        ).grid(row=0, column=3)
+        )
+        self._batch_btn.grid(row=0, column=3)
 
         # Strength meter + metrics strip
         self._strength_meter = StrengthMeterCanvas(
@@ -433,20 +468,18 @@ class PasswordGeneratorWindow:
             btn.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 4, 0))
             self._mode_buttons[mode] = btn
 
-        # Stacked mode container
-        stack = ttk.Frame(card, style="Card.TFrame")
-        stack.grid(row=2, column=0, sticky="nsew")
+        # Scrollable stacked mode container with two-finger touchpad support
+        self._policy_scroll = TouchpadScrollableFrame(card, bg=self._palette.bg_surface)
+        self._policy_scroll.grid(row=2, column=0, sticky="nsew")
+        stack = self._policy_scroll.content
         stack.columnconfigure(0, weight=1)
-        stack.rowconfigure(0, weight=1)
 
         self._mode_frames[GenerationMode.PASSWORD] = self._build_password_panel(stack)
         self._mode_frames[GenerationMode.PASSPHRASE] = self._build_passphrase_panel(stack)
         self._mode_frames[GenerationMode.TOKEN] = self._build_token_panel(stack)
         self._mode_frames[GenerationMode.PIN] = self._build_pin_panel(stack)
 
-        for frame in self._mode_frames.values():
-            frame.grid(row=0, column=0, sticky="nsew")
-        self._mode_frames[self._active_mode].tkraise()
+        self._show_mode_panel(self._active_mode)
 
         # Footer clipboard auto-clear hygiene setting
         footer = ttk.Frame(card, style="Card.TFrame")
@@ -768,6 +801,7 @@ class PasswordGeneratorWindow:
         border, card = self._create_card(parent, padding=(14, 10))
         border.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         card.columnconfigure(0, weight=1)
+        self._audit_card = card
 
         ttk.Label(
             card, text="2026 Brute-Force Resistance & Audit", style="CardHeading.TLabel"
@@ -790,12 +824,13 @@ class PasswordGeneratorWindow:
             text="",
             justify="left",
             anchor="w",
-            wraplength=440,
+            wraplength=self._last_audit_wrap,
             font=self._fonts.caption,
             bg=self._palette.bg_surface,
             fg=self._palette.text_secondary,
         )
         self._audit_notes_label.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        card.bind("<Configure>", self._on_audit_card_configure)
 
     def _build_batch_card(self, parent: ttk.Frame) -> None:
         border, card = self._create_card(parent, padding=(14, 10))
@@ -820,7 +855,7 @@ class PasswordGeneratorWindow:
         self._batch_rows_frame.columnconfigure(0, weight=1)
 
     def _build_vault_card(self, parent: ttk.Frame) -> None:
-        border, card = self._create_card(parent, padding=(14, 10))
+        border, card = self._create_card(parent)
         border.grid(row=2, column=0, sticky="nsew")
         card.columnconfigure(0, weight=1)
         card.rowconfigure(0, weight=1)
@@ -829,6 +864,7 @@ class PasswordGeneratorWindow:
             card,
             palette=self._palette,
             fonts=self._fonts,
+            scale=self._scale,
             on_copy_entry=self._copy_value,
             on_inspect_entry=self._load_secret_into_analyzer,
             on_wipe=self._wipe_vault,
@@ -850,11 +886,39 @@ class PasswordGeneratorWindow:
         self.root.bind("<Control-L>", lambda _e: self.clear_clipboard_now())
         self.root.bind("<F1>", lambda _e: self._show_help_dialog())
 
+    def _on_audit_card_configure(self, event: tk.Event[tk.Misc]) -> None:
+        target_wrap = max(self._px(200), event.width - self._px(30))
+        if abs(target_wrap - self._last_audit_wrap) >= self._px(10) and self._wrap_after_id is None:
+            self._wrap_after_id = self.root.after_idle(self._apply_audit_wrap)
+
+    def _apply_audit_wrap(self) -> None:
+        self._wrap_after_id = None
+        target_wrap = max(self._px(200), self._audit_card.winfo_width() - self._px(30))
+        if abs(target_wrap - self._last_audit_wrap) >= self._px(10):
+            self._last_audit_wrap = target_wrap
+            self._audit_notes_label.configure(wraplength=target_wrap)
+
+    def _show_mode_panel(self, active_mode: GenerationMode) -> None:
+        for mode, frame in self._mode_frames.items():
+            if mode == active_mode:
+                frame.grid(row=0, column=0, sticky="nsew")
+            else:
+                frame.grid_remove()
+        self._policy_scroll.canvas.yview_moveto(0.0)
+        self._policy_scroll.sync_scroll_region()
+
     def _apply_theme(self) -> None:
         self._palette = get_palette(self._theme_mode)
         p = self._palette
 
-        apply_ttk_theme(self._style, p, self._fonts)
+        apply_ttk_theme(self._style, p, self._fonts, scale=self._scale)
+        self._icons = build_ui_icons(
+            primary_fg=p.accent_fg,
+            secondary_fg=p.text_primary,
+            danger_fg=p.danger,
+            scale=self._scale,
+        )
+
         self.root.configure(bg=p.bg_app)
         self.root.option_add("*TCombobox*Listbox.background", p.bg_surface)
         self.root.option_add("*TCombobox*Listbox.foreground", p.text_primary)
@@ -862,26 +926,50 @@ class PasswordGeneratorWindow:
         self.root.option_add("*TCombobox*Listbox.selectForeground", p.accent_fg)
 
         for frame in self._bordered_cards:
-            frame.configure(bg=p.border, highlightbackground=p.border)
+            frame.configure(bg=p.bg_surface, highlightbackground=p.border)
         for switch in self._toggle_switches:
             switch.set_palette(p)
 
-        self._secret_entry_border.configure(bg=p.border, highlightbackground=p.border)
+        self._policy_scroll.set_background(p.bg_surface)
+        self._secret_entry_border.configure(bg=p.bg_input, highlightbackground=p.border)
         self._secret_entry.configure(
             bg=p.bg_input,
             fg=p.text_primary,
             insertbackground=p.text_primary,
         )
         self._strength_meter.set_palette(p)
-        self._vault_panel.set_palette(p)
+        self._vault_panel.set_palette(p, wipe_icon=self._icons.wipe)
         self._error_label.configure(bg=p.bg_surface, fg=p.danger)
         self._audit_notes_label.configure(bg=p.bg_surface, fg=p.text_secondary)
-        self._theme_btn.configure(text="Light Mode" if self._theme_mode == "dark" else "Dark Mode")
+
+        self._generate_btn.configure(image=self._icons.generate, compound="left")
+        self._copy_btn.configure(image=self._icons.copy, compound="left")
+        self._batch_btn.configure(image=self._icons.batch, compound="left")
+        self._help_btn.configure(image=self._icons.help_icon, compound="left")
+        self._theme_btn.configure(
+            text="Light Mode" if self._theme_mode == "dark" else "Dark Mode",
+            image=self._icons.theme,
+            compound="left",
+        )
+        self._refresh_mask_button()
 
         if self._last_generated is not None:
             self._update_report_view(self._last_generated.report)
 
-        apply_windows_titlebar_theme(self.root, dark=(self._theme_mode == "dark"))
+        if self.root.state() != "withdrawn":
+            apply_windows_titlebar_theme(self.root, dark=(self._theme_mode == "dark"))
+
+    def _refresh_mask_button(self) -> None:
+        masked = self._masked_var.get()
+        if self._icons is not None:
+            icon = self._icons.eye_open if masked else self._icons.eye_closed
+            self._mask_btn.configure(
+                text="Show" if masked else "Hide",
+                image=icon,
+                compound="left",
+            )
+        else:
+            self._mask_btn.configure(text="Show" if masked else "Hide")
 
     def toggle_theme(self) -> None:
         """Switch between Obsidian Dark and Studio Light themes and persist preference."""
@@ -891,14 +979,14 @@ class PasswordGeneratorWindow:
 
     def _set_entry_focus(self, *, focused: bool) -> None:
         color = self._palette.border_focus if focused else self._palette.border
-        self._secret_entry_border.configure(bg=color, highlightbackground=color)
+        self._secret_entry_border.configure(bg=self._palette.bg_input, highlightbackground=color)
 
     def toggle_mask(self) -> None:
         """Toggle visibility of the active secret display."""
         masked = not self._masked_var.get()
         self._masked_var.set(masked)
         self._secret_entry.configure(show="•" if masked else "")
-        self._mask_btn.configure(text="Show" if masked else "Hide")
+        self._refresh_mask_button()
         self._render_batch_rows()
         self._save_preferences()
 
@@ -909,7 +997,7 @@ class PasswordGeneratorWindow:
             btn.configure(
                 style="ModeActive.TButton" if item_mode == mode else "ModeInactive.TButton"
             )
-        self._mode_frames[mode].tkraise()
+        self._show_mode_panel(mode)
         self.generate_current()
 
     def _on_preset_selected(self, _event: tk.Event[tk.Misc] | None = None) -> None:
@@ -931,7 +1019,7 @@ class PasswordGeneratorWindow:
                     if item_mode == preset.mode
                     else "ModeInactive.TButton"
                 )
-            self._mode_frames[preset.mode].tkraise()
+            self._show_mode_panel(preset.mode)
 
             if preset.password_policy is not None:
                 p = preset.password_policy
@@ -1110,9 +1198,12 @@ class PasswordGeneratorWindow:
             child.destroy()
 
         masked = self._masked_var.get()
+        pad_x = self._px(8)
+        pad_y = self._px(4)
+        gap_y = self._px(3)
         for idx, item in enumerate(self._batch_items):
-            row = ttk.Frame(self._batch_rows_frame, style="Elevated.TFrame", padding=(8, 4))
-            row.grid(row=idx, column=0, sticky="ew", pady=(0, 4))
+            row = ttk.Frame(self._batch_rows_frame, style="Elevated.TFrame", padding=(pad_x, pad_y))
+            row.grid(row=idx, column=0, sticky="ew", pady=(0, gap_y))
             row.columnconfigure(0, weight=1)
 
             preview = "•" * min(16, len(item.value)) if masked else item.value
@@ -1287,9 +1378,17 @@ class PasswordGeneratorWindow:
         apply_windows_titlebar_theme(dialog, dark=(self._theme_mode == "dark"))
 
     def _on_close(self) -> None:
+        # Hide window first so child teardown never paints visual artifacts.
+        with suppress(tk.TclError):
+            self.root.withdraw()
         if self._vault_record_after_id is not None:
-            self.root.after_cancel(self._vault_record_after_id)
+            with suppress(tk.TclError):
+                self.root.after_cancel(self._vault_record_after_id)
             self._vault_record_after_id = None
+        if self._wrap_after_id is not None:
+            with suppress(tk.TclError):
+                self.root.after_cancel(self._wrap_after_id)
+            self._wrap_after_id = None
         self._clipboard.cancel_timer()
         self._vault.wipe()
         self._save_preferences()

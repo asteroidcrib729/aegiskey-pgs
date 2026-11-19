@@ -1,10 +1,10 @@
-"""Obsidian Dark and Studio Light design tokens, font resolution, and ttk styling."""
+"""Obsidian Dark and Studio Light design tokens, font resolution, and crisp ttk styling."""
 
 import tkinter as tk
 from dataclasses import dataclass
 from tkinter import font as tkfont
 from tkinter import ttk
-from typing import Literal
+from typing import Any, Literal
 
 ThemeMode = Literal["dark", "light"]
 
@@ -36,11 +36,11 @@ class ThemePalette:
 
 DARK_PALETTE = ThemePalette(
     mode="dark",
-    bg_app="#0B0F17",
-    bg_surface="#121826",
-    bg_elevated="#1A2234",
-    bg_input="#0E1420",
-    border="#26334D",
+    bg_app="#0A0E17",
+    bg_surface="#111827",
+    bg_elevated="#192338",
+    bg_input="#0D131F",
+    border="#28354F",
     border_focus="#38BDF8",
     text_primary="#F8FAFC",
     text_secondary="#94A3B8",
@@ -94,7 +94,7 @@ class FontSet:
 
     @property
     def title(self) -> tuple[str, int, str]:
-        return (self.display_family, 15, "bold")
+        return (self.display_family, 14, "bold")
 
     @property
     def subtitle(self) -> tuple[str, int]:
@@ -106,23 +106,23 @@ class FontSet:
 
     @property
     def body(self) -> tuple[str, int]:
-        return (self.ui_family, 10)
-
-    @property
-    def body_bold(self) -> tuple[str, int, str]:
-        return (self.ui_family, 10, "bold")
-
-    @property
-    def caption(self) -> tuple[str, int]:
         return (self.ui_family, 9)
 
     @property
-    def caption_bold(self) -> tuple[str, int, str]:
+    def body_bold(self) -> tuple[str, int, str]:
         return (self.ui_family, 9, "bold")
 
     @property
+    def caption(self) -> tuple[str, int]:
+        return (self.ui_family, 8)
+
+    @property
+    def caption_bold(self) -> tuple[str, int, str]:
+        return (self.ui_family, 8, "bold")
+
+    @property
     def secret_hero(self) -> tuple[str, int, str]:
-        return (self.mono_family, 14, "bold")
+        return (self.mono_family, 13, "bold")
 
     @property
     def mono_small(self) -> tuple[str, int]:
@@ -161,9 +161,19 @@ def resolve_fonts(root: tk.Misc) -> FontSet:
     )
 
 
-def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> None:
-    """Apply cohesive modern widget styling on top of the ``clam`` ttk theme."""
+def apply_ttk_theme(
+    style: ttk.Style,
+    palette: ThemePalette,
+    fonts: FontSet,
+    *,
+    scale: float = 1.0,
+) -> None:
+    """Apply crisp modern flat widget styling on top of the ``clam`` ttk theme."""
     style.theme_use("clam")
+    s = max(1.0, scale)
+
+    def _p(logical: float) -> int:
+        return max(1, round(logical * s))
 
     style.configure(
         ".",
@@ -219,21 +229,26 @@ def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> 
         font=fonts.mono_small,
     )
 
-    # Buttons
+    # Crisp flat 1px buttons (removes retro clam 3D bevels)
     style.configure(
         "Primary.TButton",
         background=palette.accent,
         foreground=palette.accent_fg,
         bordercolor=palette.accent,
+        lightcolor=palette.accent,
+        darkcolor=palette.accent,
+        borderwidth=1,
         focusthickness=1,
-        padding=(14, 8),
+        padding=(_p(12), _p(6)),
         font=fonts.body_bold,
         relief="flat",
     )
     style.map(
         "Primary.TButton",
         background=[("active", palette.accent_hover), ("pressed", palette.accent_hover)],
-        bordercolor=[("active", palette.accent_hover)],
+        bordercolor=[("active", palette.accent_hover), ("focus", palette.border_focus)],
+        lightcolor=[("active", palette.accent_hover)],
+        darkcolor=[("active", palette.accent_hover)],
     )
 
     style.configure(
@@ -241,14 +256,20 @@ def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> 
         background=palette.bg_elevated,
         foreground=palette.text_primary,
         bordercolor=palette.border,
-        padding=(12, 8),
+        lightcolor=palette.border,
+        darkcolor=palette.border,
+        borderwidth=1,
+        focusthickness=1,
+        padding=(_p(10), _p(5)),
         font=fonts.caption_bold,
         relief="flat",
     )
     style.map(
         "Secondary.TButton",
         background=[("active", palette.border), ("pressed", palette.border)],
-        bordercolor=[("focus", palette.border_focus)],
+        bordercolor=[("focus", palette.border_focus), ("active", palette.border_focus)],
+        lightcolor=[("focus", palette.border_focus)],
+        darkcolor=[("focus", palette.border_focus)],
     )
 
     style.configure(
@@ -256,7 +277,10 @@ def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> 
         background=palette.bg_elevated,
         foreground=palette.danger,
         bordercolor=palette.border,
-        padding=(10, 6),
+        lightcolor=palette.border,
+        darkcolor=palette.border,
+        borderwidth=1,
+        padding=(_p(10), _p(5)),
         font=fonts.caption_bold,
         relief="flat",
     )
@@ -264,6 +288,7 @@ def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> 
         "Danger.TButton",
         background=[("active", palette.danger), ("pressed", palette.danger)],
         foreground=[("active", "#FFFFFF"), ("pressed", "#FFFFFF")],
+        bordercolor=[("active", palette.danger)],
     )
 
     style.configure(
@@ -271,7 +296,10 @@ def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> 
         background=palette.accent,
         foreground=palette.accent_fg,
         bordercolor=palette.accent,
-        padding=(10, 7),
+        lightcolor=palette.accent,
+        darkcolor=palette.accent,
+        borderwidth=1,
+        padding=(_p(10), _p(6)),
         font=fonts.caption_bold,
         relief="flat",
     )
@@ -285,7 +313,10 @@ def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> 
         background=palette.bg_elevated,
         foreground=palette.text_secondary,
         bordercolor=palette.border,
-        padding=(10, 7),
+        lightcolor=palette.border,
+        darkcolor=palette.border,
+        borderwidth=1,
+        padding=(_p(10), _p(6)),
         font=fonts.caption_bold,
         relief="flat",
     )
@@ -295,7 +326,7 @@ def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> 
         foreground=[("active", palette.text_primary)],
     )
 
-    # Inputs
+    # Crisp 1px inputs
     style.configure(
         "App.TEntry",
         fieldbackground=palette.bg_input,
@@ -304,12 +335,14 @@ def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> 
         bordercolor=palette.border,
         lightcolor=palette.border,
         darkcolor=palette.border,
-        padding=(8, 6),
+        borderwidth=1,
+        padding=(_p(8), _p(5)),
     )
     style.map(
         "App.TEntry",
         bordercolor=[("focus", palette.border_focus)],
         lightcolor=[("focus", palette.border_focus)],
+        darkcolor=[("focus", palette.border_focus)],
     )
 
     style.configure(
@@ -319,7 +352,10 @@ def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> 
         background=palette.bg_elevated,
         arrowcolor=palette.text_primary,
         bordercolor=palette.border,
-        padding=(6, 4),
+        lightcolor=palette.border,
+        darkcolor=palette.border,
+        borderwidth=1,
+        padding=(_p(6), _p(4)),
     )
 
     style.configure(
@@ -329,7 +365,10 @@ def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> 
         background=palette.bg_elevated,
         arrowcolor=palette.text_primary,
         bordercolor=palette.border,
-        padding=(8, 5),
+        lightcolor=palette.border,
+        darkcolor=palette.border,
+        borderwidth=1,
+        padding=(_p(8), _p(4)),
     )
     style.map(
         "App.TCombobox",
@@ -337,21 +376,57 @@ def apply_ttk_theme(style: ttk.Style, palette: ThemePalette, fonts: FontSet) -> 
         foreground=[("readonly", palette.text_primary)],
         selectbackground=[("readonly", palette.bg_input)],
         selectforeground=[("readonly", palette.text_primary)],
+        bordercolor=[("focus", palette.border_focus)],
     )
 
     style.configure(
         "App.Horizontal.TScale",
-        background=palette.bg_surface,
-        troughcolor=palette.bg_elevated,
+        background=palette.bg_elevated,
+        troughcolor=palette.bg_input,
         bordercolor=palette.border,
-        sliderlength=18,
+        lightcolor=palette.accent,
+        darkcolor=palette.border,
+        focusthickness=0,
+        borderwidth=1,
+        sliderthickness=max(13, round(14 * scale)),
+        sliderlength=max(16, round(18 * scale)),
         sliderrelief="flat",
     )
+    style.map(
+        "App.Horizontal.TScale",
+        background=[("active", palette.accent), ("pressed", palette.accent_hover)],
+        bordercolor=[("focus", palette.border_focus), ("active", palette.accent)],
+        lightcolor=[("active", palette.accent_hover)],
+    )
 
+    # Modern arrowless slim vertical scrollbar layout
+    scrollbar_layout: Any = [
+        (
+            "Vertical.Scrollbar.trough",
+            {
+                "sticky": "ns",
+                "children": [
+                    ("Vertical.Scrollbar.thumb", {"expand": 1, "sticky": "nswe"}),
+                ],
+            },
+        )
+    ]
+    style.layout("App.Vertical.TScrollbar", scrollbar_layout)
     style.configure(
         "App.Vertical.TScrollbar",
-        background=palette.bg_elevated,
+        gripcount=0,
+        width=max(7, round(8 * scale)),
+        borderwidth=0,
+        background=palette.border,
         troughcolor=palette.bg_surface,
         bordercolor=palette.bg_surface,
-        arrowcolor=palette.text_secondary,
+        lightcolor=palette.border,
+        darkcolor=palette.border,
+        relief="flat",
+    )
+    style.map(
+        "App.Vertical.TScrollbar",
+        background=[("active", palette.text_muted), ("pressed", palette.accent)],
+        lightcolor=[("active", palette.text_muted)],
+        darkcolor=[("active", palette.text_muted)],
     )

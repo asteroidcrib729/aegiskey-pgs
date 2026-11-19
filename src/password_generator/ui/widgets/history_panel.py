@@ -1,4 +1,4 @@
-"""Ephemeral RAM-only Session Vault panel displaying recently generated secrets safely."""
+"""Ephemeral RAM-only Session Vault panel with smooth touchpad scrolling and masking."""
 
 import tkinter as tk
 from collections.abc import Callable
@@ -7,6 +7,7 @@ from tkinter import ttk
 
 from password_generator.services.history import HistoryEntry
 from password_generator.ui.theme import FontSet, ThemePalette
+from password_generator.ui.widgets.scrollable import TouchpadScrollableFrame
 
 
 class SessionVaultPanel(ttk.Frame):
@@ -18,13 +19,16 @@ class SessionVaultPanel(ttk.Frame):
         *,
         palette: ThemePalette,
         fonts: FontSet,
+        scale: float = 1.0,
         on_copy_entry: Callable[[str], None],
         on_inspect_entry: Callable[[str], None],
         on_wipe: Callable[[], None],
+        wipe_icon: tk.PhotoImage | None = None,
     ) -> None:
         super().__init__(master, style="Card.TFrame")
         self._palette = palette
         self._fonts = fonts
+        self._scale = max(1.0, scale)
         self._on_copy_entry = on_copy_entry
         self._on_inspect_entry = on_inspect_entry
         self._on_wipe = on_wipe
@@ -35,7 +39,7 @@ class SessionVaultPanel(ttk.Frame):
         self.rowconfigure(1, weight=1)
 
         header = ttk.Frame(self, style="Card.TFrame")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, round(6 * self._scale)))
         header.columnconfigure(0, weight=1)
 
         self._title_label = ttk.Label(
@@ -54,7 +58,7 @@ class SessionVaultPanel(ttk.Frame):
             style="Secondary.TButton",
             command=self._toggle_reveal,
         )
-        self._reveal_btn.grid(row=0, column=0, padx=(0, 6))
+        self._reveal_btn.grid(row=0, column=0, padx=(0, round(5 * self._scale)))
 
         self._wipe_btn = ttk.Button(
             actions,
@@ -62,48 +66,25 @@ class SessionVaultPanel(ttk.Frame):
             style="Danger.TButton",
             command=self._on_wipe,
         )
+        if wipe_icon is not None:
+            self._wipe_btn.configure(image=wipe_icon, compound="left")
         self._wipe_btn.grid(row=0, column=1)
 
-        # Canvas-based scrollable row container for clean custom row styling.
-        list_wrap = ttk.Frame(self, style="Card.TFrame")
-        list_wrap.grid(row=1, column=0, sticky="nsew")
-        list_wrap.columnconfigure(0, weight=1)
-        list_wrap.rowconfigure(0, weight=1)
-
-        self._canvas = tk.Canvas(
-            list_wrap,
+        self._scroll_area = TouchpadScrollableFrame(
+            self,
             bg=palette.bg_surface,
-            highlightthickness=0,
-            bd=0,
-            height=180,
+            height=round(130 * self._scale),
         )
-        self._canvas.grid(row=0, column=0, sticky="nsew")
+        self._scroll_area.grid(row=1, column=0, sticky="nsew")
+        self._rows_frame = self._scroll_area.content
+        self._rows_frame.columnconfigure(0, weight=1)
 
-        scrollbar = ttk.Scrollbar(
-            list_wrap,
-            orient="vertical",
-            command=self._canvas.yview,
-            style="App.Vertical.TScrollbar",
-        )
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        self._canvas.configure(yscrollcommand=scrollbar.set)
-
-        self._rows_frame = ttk.Frame(self._canvas, style="Card.TFrame")
-        self._window_id = self._canvas.create_window((0, 0), window=self._rows_frame, anchor="nw")
-
-        self._rows_frame.bind(
-            "<Configure>",
-            lambda _e: self._canvas.configure(scrollregion=self._canvas.bbox("all")),
-        )
-        self._canvas.bind(
-            "<Configure>",
-            lambda e: self._canvas.itemconfigure(self._window_id, width=e.width),
-        )
-
-    def set_palette(self, palette: ThemePalette) -> None:
+    def set_palette(self, palette: ThemePalette, *, wipe_icon: tk.PhotoImage | None = None) -> None:
         """Update canvas background on theme change and re-render rows."""
         self._palette = palette
-        self._canvas.configure(bg=palette.bg_surface)
+        self._scroll_area.set_background(palette.bg_surface)
+        if wipe_icon is not None:
+            self._wipe_btn.configure(image=wipe_icon, compound="left")
         self._render_rows()
 
     def set_entries(self, entries: tuple[HistoryEntry, ...]) -> None:
@@ -135,12 +116,16 @@ class SessionVaultPanel(ttk.Frame):
                 style="CardMuted.TLabel",
             )
             empty.grid(row=0, column=0, sticky="w", pady=12)
+            self._scroll_area.sync_scroll_region()
             return
 
         revealed = self._revealed.get()
+        pad_x = round(9 * self._scale)
+        pad_y = round(6 * self._scale)
+        row_gap = round(5 * self._scale)
         for row_idx, entry in enumerate(self._entries):
-            row_card = ttk.Frame(self._rows_frame, style="Elevated.TFrame", padding=(10, 7))
-            row_card.grid(row=row_idx, column=0, sticky="ew", pady=(0, 6))
+            row_card = ttk.Frame(self._rows_frame, style="Elevated.TFrame", padding=(pad_x, pad_y))
+            row_card.grid(row=row_idx, column=0, sticky="ew", pady=(0, row_gap))
             row_card.columnconfigure(0, weight=1)
 
             display_text = entry.value if revealed else self._mask_secret(entry.value)
@@ -172,3 +157,5 @@ class SessionVaultPanel(ttk.Frame):
                 command=partial(self._on_copy_entry, entry.value),
             )
             copy_btn.grid(row=0, column=1)
+
+        self._scroll_area.sync_scroll_region()

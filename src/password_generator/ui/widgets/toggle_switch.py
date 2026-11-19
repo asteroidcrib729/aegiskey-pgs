@@ -1,13 +1,15 @@
-"""High-DPI crisp Canvas pill toggle switch widget bound to a ``tk.BooleanVar``."""
+"""High-DPI anti-aliased SVG pill toggle switch widget bound to a ``tk.BooleanVar``."""
 
 import tkinter as tk
 from collections.abc import Callable
+from contextlib import suppress
 
+from password_generator.ui.icons import render_svg
 from password_generator.ui.theme import ThemePalette
 
 
-class ToggleSwitch(tk.Canvas):
-    """Accessible pill toggle switch with keyboard support and theme adaptation."""
+class ToggleSwitch(tk.Label):
+    """Crisp anti-aliased pill toggle switch with keyboard support and theme adaptation."""
 
     def __init__(
         self,
@@ -19,12 +21,15 @@ class ToggleSwitch(tk.Canvas):
         command: Callable[[], None] | None = None,
     ) -> None:
         self._scale = max(1.0, scale)
-        self._width = round(42 * self._scale)
-        self._height = round(22 * self._scale)
+        self._variable = variable
+        self._palette = palette
+        self._command = command
+
+        self._img_on: tk.PhotoImage | None = None
+        self._img_off: tk.PhotoImage | None = None
+
         super().__init__(
             master,
-            width=self._width,
-            height=self._height,
             bg=palette.bg_surface,
             highlightthickness=1,
             highlightbackground=palette.bg_surface,
@@ -33,26 +38,51 @@ class ToggleSwitch(tk.Canvas):
             cursor="hand2",
             takefocus=1,
         )
-        self._variable = variable
-        self._palette = palette
-        self._command = command
 
         self.bind("<Button-1>", self._on_toggle)
         self.bind("<space>", self._on_toggle)
         self.bind("<Return>", self._on_toggle)
-        self._trace_name = self._variable.trace_add("write", lambda *_: self._redraw())
+        self._trace_name = self._variable.trace_add("write", lambda *_: self._refresh_image())
         self.bind("<Destroy>", self._on_destroy)
-        self._redraw()
+
+        self._rebuild_images()
+        self._refresh_image()
 
     def set_palette(self, palette: ThemePalette) -> None:
-        """Update surface colors when the application theme changes."""
+        """Update surface colors and re-rasterize anti-aliased switch SVGs on theme change."""
         self._palette = palette
         self.configure(
             bg=palette.bg_surface,
             highlightbackground=palette.bg_surface,
             highlightcolor=palette.border_focus,
         )
-        self._redraw()
+        self._rebuild_images()
+        self._refresh_image()
+
+    def _rebuild_images(self) -> None:
+        p = self._palette
+        # 40x22 logical viewBox rasterized smoothly via Tk 9.0 SVG engine.
+        svg_on = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="22" viewBox="0 0 40 22">'
+            f'<rect x="1" y="1" width="38" height="20" rx="10" fill="{p.accent}" '
+            f'stroke="{p.accent}" stroke-width="1"/>'
+            f'<circle cx="29" cy="11" r="7.2" fill="{p.switch_knob}"/>'
+            "</svg>"
+        )
+        svg_off = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="22" viewBox="0 0 40 22">'
+            f'<rect x="1" y="1" width="38" height="20" rx="10" fill="{p.switch_off}" '
+            f'stroke="{p.border}" stroke-width="1"/>'
+            f'<circle cx="11" cy="11" r="7.2" fill="{p.switch_knob}"/>'
+            "</svg>"
+        )
+        self._img_on = render_svg(svg_on, scale=self._scale)
+        self._img_off = render_svg(svg_off, scale=self._scale)
+
+    def _refresh_image(self) -> None:
+        img = self._img_on if self._variable.get() else self._img_off
+        if img is not None:
+            self.configure(image=img)
 
     def _on_toggle(self, _event: tk.Event[tk.Misc] | None = None) -> str:
         self._variable.set(not self._variable.get())
@@ -62,37 +92,7 @@ class ToggleSwitch(tk.Canvas):
 
     def _on_destroy(self, event: tk.Event[tk.Misc]) -> None:
         if event.widget is self:
-            self._variable.trace_remove("write", self._trace_name)
-
-    def _redraw(self) -> None:
-        self.delete("all")
-        checked = self._variable.get()
-        track_color = self._palette.accent if checked else self._palette.switch_off
-        pad = round(2 * self._scale)
-        w = self._width
-        h = self._height
-        r = h - pad * 2
-
-        # Pill background constructed from two end circles and center rectangle for crisp edges.
-        self.create_oval(pad, pad, pad + r, pad + r, fill=track_color, outline=track_color)
-        self.create_oval(w - pad - r, pad, w - pad, pad + r, fill=track_color, outline=track_color)
-        self.create_rectangle(
-            pad + r / 2,
-            pad,
-            w - pad - r / 2,
-            pad + r,
-            fill=track_color,
-            outline=track_color,
-        )
-
-        knob_pad = round(4 * self._scale)
-        knob_d = h - knob_pad * 2
-        knob_x = (w - knob_pad - knob_d) if checked else knob_pad
-        self.create_oval(
-            knob_x,
-            knob_pad,
-            knob_x + knob_d,
-            knob_pad + knob_d,
-            fill=self._palette.switch_knob,
-            outline=self._palette.switch_knob,
-        )
+            with suppress(tk.TclError):
+                self._variable.trace_remove("write", self._trace_name)
+            self._img_on = None
+            self._img_off = None

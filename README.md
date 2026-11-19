@@ -18,8 +18,10 @@ A modern, high-DPI Tkinter desktop workstation for generating and auditing crypt
   - Evaluates both generated secrets and manually typed/pasted inputs in real time.
   - Computes effective entropy bits, 0–100 security score, 6-tier classification (`Critical` → `Quantum-Resistant`), pattern warnings (repeats, monotonic runs, keyboard walks), and crack-time estimates across online throttled, offline Argon2id GPU, and offline SHA-256 ASIC models.
 - **High-DPI Tkinter Workstation UI:**
-  - Windows Per-Monitor v2 DPI awareness (`SetProcessDpiAwarenessContext`) + synchronized `tk scaling` and native DWM dark/light titlebar support.
-  - Switchable **Obsidian Dark** and **Studio Light** themes with custom HiDPI `Canvas` toggle switches and a 6-segment strength meter.
+  - Windows Per-Monitor v2 DPI awareness (`SetProcessDpiAwarenessContext`), synchronized `tk scaling`, DPI-proportional spacing, native DWM dark/light titlebar support, and flicker-free startup/teardown.
+  - Anti-aliased Tk 9.0 SVG vector app icon, button icons, pill toggle switches, and rounded segmented strength meter.
+  - Precision two-finger laptop touchpad scrolling (`<TouchpadScroll>` + sub-notch `<MouseWheel>`) across scrollable policy and vault viewports.
+  - Switchable **Obsidian Dark** and **Studio Light** themes.
 - **Zero-Persistence Secret Hygiene:**
   - **Auto-Clearing Clipboard:** Configurable countdown (`15s` / `30s` / `60s` / `120s` / `Manual`) that verifies clipboard ownership before wiping so unrelated copies stay untouched.
   - **RAM-Only Session Vault:** Masked-by-default history stored exclusively in memory and wiped on exit or on demand.

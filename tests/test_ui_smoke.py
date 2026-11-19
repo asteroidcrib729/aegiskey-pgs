@@ -1,12 +1,66 @@
-"""Tkinter UI smoke and integration tests verifying rendering, modes, errors, and teardown."""
+"""Tkinter UI smoke and integration tests for SVG rendering, touchpad scroll, and lifecycle."""
 
 import tkinter as tk
 from contextlib import suppress
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 from password_generator.core.models import GenerationMode
 from password_generator.services.settings_store import SettingsStore
 from password_generator.ui.main_window import PasswordGeneratorWindow
+from password_generator.ui.widgets.scrollable import (
+    TouchpadScrollableFrame,
+    unpack_touchpad_deltas,
+)
+
+
+def test_unpack_touchpad_deltas_decodes_signed_dx_and_dy() -> None:
+    # Positive dy = 24, dx = 0
+    assert unpack_touchpad_deltas(24) == (0, 24)
+    # Negative dy = -18 (16-bit two's complement 0xFFEE)
+    assert unpack_touchpad_deltas(0xFFEE) == (0, -18)
+    # Combined dx = -10 (0xFFF6 << 16), dy = 12
+    packed = (0xFFF6 << 16) | 12
+    assert unpack_touchpad_deltas(packed) == (-10, 12)
+
+
+def test_touchpad_scrollable_frame_scrolls_smoothly_on_small_deltas() -> None:
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        frame = TouchpadScrollableFrame(root, bg="#111827", height=120)
+        frame.pack(fill="both", expand=True)
+        for i in range(25):
+            tk.Label(frame.content, text=f"Row {i}").pack(pady=4)
+
+        root.geometry("300x120")
+        root.update()
+        assert frame.can_scroll() is True
+
+        initial_top = frame.canvas.yview()[0]
+        # Dispatch Tk 9.0 TouchpadScroll downward swipe (negative dy = -30 -> +30 px down)
+        fake_event = cast(
+            Any,
+            SimpleNamespace(widget=frame.content.winfo_children()[0], delta=0xFFE2),
+        )
+        res = TouchpadScrollableFrame._dispatch_touchpad(fake_event)
+        assert res == "break"
+        assert frame.canvas.yview()[0] > initial_top
+
+        # Dispatch small MouseWheel fractional deltas (multiple -15 precision ticks)
+        after_touchpad = frame.canvas.yview()[0]
+        small_wheel = cast(
+            Any,
+            SimpleNamespace(widget=frame.content.winfo_children()[0], delta=-15),
+        )
+        TouchpadScrollableFrame._dispatch_mousewheel(small_wheel)
+        TouchpadScrollableFrame._dispatch_mousewheel(small_wheel)
+        assert frame.canvas.yview()[0] > after_touchpad
+    finally:
+        with suppress(tk.TclError):
+            if root.winfo_exists():
+                root.destroy()
 
 
 def test_main_window_lifecycle_interactions_and_error_handling(tmp_path: Path) -> None:
@@ -21,6 +75,7 @@ def test_main_window_lifecycle_interactions_and_error_handling(tmp_path: Path) -
         assert len(initial_secret) == 24
         assert window._vault.count >= 1
         assert len(window._batch_items) == 5
+        assert window._strength_meter._meter_image is not None
 
         # Switch through every generation mode and verify output
         window.switch_mode(GenerationMode.PASSPHRASE)
@@ -75,6 +130,27 @@ def test_main_window_lifecycle_interactions_and_error_handling(tmp_path: Path) -
         window._on_close()
         assert store.load().theme == "light"
         assert store.load().mask_secret_display is True
+    finally:
+        with suppress(tk.TclError):
+            if root.winfo_exists():
+                root.destroy()
+
+
+def test_window_present_and_resize_cycle(tmp_path: Path) -> None:
+    root = tk.Tk()
+    root.withdraw()
+    with suppress(tk.TclError):
+        root.attributes("-alpha", 0.0)
+    try:
+        store = SettingsStore(tmp_path / "present_prefs.json")
+        window = PasswordGeneratorWindow(root, settings_store=store)
+        window.present()
+        root.geometry("980x640")
+        root.update()
+        root.geometry("1220x780")
+        root.update()
+        assert window._audit_notes_label.cget("wraplength") >= 200
+        window._on_close()
     finally:
         with suppress(tk.TclError):
             if root.winfo_exists():
