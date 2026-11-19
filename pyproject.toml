@@ -1,0 +1,74 @@
+[project]
+name = "password-generator-app"
+version = "2.0.0"
+description = "High-DPI Tkinter cryptographic password, passphrase, API token, and PIN generator with real-time entropy analysis and clipboard hygiene."
+readme = "README.md"
+requires-python = ">=3.14.7,<3.15"
+dependencies = []
+
+[project.scripts]
+password-generator = "password_generator.__main__:main"
+
+[project.gui-scripts]
+password-generator-gui = "password_generator.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pyrefly>=1.5.0",
+    "pytest>=9.2.0",
+    "ruff>=0.17.5",
+]
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/password_generator"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "I",
+    "N",
+    "UP",
+    "B",
+    "SIM",
+    "RUF",
+    "S",
+    "ANN",
+    "RET",
+    "PTH",
+]
+ignore = [
+    "ANN401", # Dynamically typed expressions (Any) allowed where Tkinter/ctypes interfaces require it
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106", "ANN"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q --basetemp=.pytest_cache/tmp"
+
+[tool.pyrefly]
+project-includes = ["src", "tests"]
+project-excludes = [".venv", "**/.venv/**"]
+search-path = ["src"]
+python-version = "3.14.7"
+python-interpreter-path = ".venv/Scripts/python.exe"
+untyped-def-behavior = "check-and-infer-return-type"
+

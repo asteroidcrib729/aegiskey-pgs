@@ -1,0 +1,28 @@
+# Python / Virtual Environments
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+*.whl
+
+# Tooling Caches
+.ruff_cache/
+.pytest_cache/
+.pyrefly/
+.uv-cache/
+.coverage
+htmlcov/
+
+# OS & Local Logs
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+
+# Keep project IDE configuration in .vscode/, ignore local ephemeral files if any
+.vscode/*.local.*

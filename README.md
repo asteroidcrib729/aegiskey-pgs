@@ -1,0 +1,105 @@
+# AegisKey · Secure Password Generator Studio (v2.0)
+
+A modern, high-DPI Tkinter desktop workstation for generating and auditing cryptographically strong passwords, Diceware passphrases, developer API tokens, and hardened PINs — built with **Python 3.14.7**, **Astral `uv`**, **Ruff**, and **Pyrefly**.
+
+> Transformed from a single 2022 coursework Jupyter Notebook (`Project FA22 - Password Generator With GUI.ipynb`) into a modular, zero-dependency, security-hardened 2026 desktop application. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full 2022 → 2026 breakdown.
+
+---
+
+## Key Capabilities
+
+- **Cryptographically Secure Generation (`secrets` CSPRNG):**
+  - **Random Passwords (4–128 chars):** Guaranteed class coverage across Uppercase, Lowercase, Digits, and Symbols, uniform filling, Fisher-Yates CSPRNG shuffle, ambiguous glyph exclusion (`0O1lI|\`'"`), no-adjacent-repeat option, start-with-letter option, custom symbols, and character exclusions.
+  - **Diceware Passphrases (4–12 words):** Curated **4,096-word** A–Z dictionary (`12.00` bits/word), customizable separators, casing (`Title Case`, `lowercase`, `UPPERCASE`, `Random Word Case`), and optional digit/symbol suffixes.
+  - **Developer API Tokens (128 / 192 / 256 / 384 / 512-bit):** URL-Safe Base64, Hexadecimal, and Base62 encodings with optional key prefixes (e.g. `ak_live_`).
+  - **Hardened PINs (4–16 digits):** Rejects ascending/descending sequences (`123`, `987`) and repeated digits.
+  - **5x Batch Generator:** Generate and inspect 5 distinct candidates in one click.
+- **Real-Time Entropy & Brute-Force Auditor:**
+  - Evaluates both generated secrets and manually typed/pasted inputs in real time.
+  - Computes effective entropy bits, 0–100 security score, 6-tier classification (`Critical` → `Quantum-Resistant`), pattern warnings (repeats, monotonic runs, keyboard walks), and crack-time estimates across online throttled, offline Argon2id GPU, and offline SHA-256 ASIC models.
+- **High-DPI Tkinter Workstation UI:**
+  - Windows Per-Monitor v2 DPI awareness (`SetProcessDpiAwarenessContext`) + synchronized `tk scaling` and native DWM dark/light titlebar support.
+  - Switchable **Obsidian Dark** and **Studio Light** themes with custom HiDPI `Canvas` toggle switches and a 6-segment strength meter.
+- **Zero-Persistence Secret Hygiene:**
+  - **Auto-Clearing Clipboard:** Configurable countdown (`15s` / `30s` / `60s` / `120s` / `Manual`) that verifies clipboard ownership before wiping so unrelated copies stay untouched.
+  - **RAM-Only Session Vault:** Masked-by-default history stored exclusively in memory and wiped on exit or on demand.
+
+---
+
+## Tech Stack & Tooling
+
+| Tool | Purpose |
+| :--- | :--- |
+| **Python 3.14.7** | Runtime & Tcl/Tk 9.0 GUI (`tkinter` / `ttk`), zero third-party runtime dependencies |
+| **Astral `uv`** | Virtual environment (`.venv`), `pyproject.toml`, and deterministic `uv.lock` |
+| **Ruff** | Strict linting (incl. Bandit `S` security rules & type annotations `ANN`) and formatting |
+| **Pyrefly** | Static/dynamic type checking and syntax validation |
+| **Pytest** | Automated unit, service, and Tkinter UI smoke tests |
+
+---
+
+## Getting Started
+
+```powershell
+# 1. Create/sync the Python 3.14.7 environment
+uv sync
+
+# 2. Launch the GUI application
+uv run password-generator
+# or:
+uv run python -m password_generator
+```
+
+---
+
+## Quality Checks
+
+```powershell
+# Lint check (Ruff)
+uv run ruff check .
+
+# Format check (Ruff)
+uv run ruff format --check .
+
+# Type check (Pyrefly)
+uv run pyrefly check
+
+# Test suite (Pytest)
+uv run pytest -v
+```
+
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+| :--- | :--- |
+| `Ctrl+G` | Generate a new secret |
+| `Ctrl+Shift+C` | Copy active secret & start auto-clear timer |
+| `Ctrl+B` | Refresh 5x batch candidates |
+| `Ctrl+M` | Toggle secret masking (Show / Hide) |
+| `Ctrl+L` | Clear OS clipboard immediately |
+| `Ctrl+T` | Toggle Obsidian Dark / Studio Light theme |
+| `F1` | Open Shortcuts & Security Reference modal |
+
+---
+
+## Project Layout
+
+```text
+password-generator-app/
+├── .vscode/                     # Dedicated IDE settings, extensions, launch & tasks
+├── docs/
+│   └── ARCHITECTURE.md          # 2022 -> 2026 transformation & security architecture
+├── src/password_generator/
+│   ├── __main__.py              # CLI / module entry point
+│   ├── app.py                   # Bootstrapper (DPI awareness + Tk root)
+│   ├── core/                    # Pure CSPRNG generators, charset, entropy & presets
+│   ├── data/                    # Packaged 4,096-word Diceware dictionary
+│   ├── services/                # Clipboard auto-wipe, RAM vault & non-secret prefs
+│   └── ui/                      # HiDPI Tkinter workstation, themes & canvas widgets
+├── tests/                       # Unit, service & UI integration tests
+├── .python-version              # Pinned to 3.14.7
+├── pyproject.toml               # uv, Ruff, Pyrefly & Pytest configuration
+└── uv.lock                      # Reproducible lockfile
+```

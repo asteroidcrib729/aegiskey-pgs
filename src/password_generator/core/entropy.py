@@ -1,0 +1,256 @@
+"""Cryptographic entropy calculation, pattern weakness auditing, and crack-time estimation."""
+
+import math
+from dataclasses import dataclass
+
+from password_generator.core.charset import DEFAULT_SYMBOL_CHARS, DIGIT_CHARS
+from password_generator.core.models import AttackEstimate, SecurityTier, StrengthReport
+
+_UNIVERSE_AGE_YEARS: float = 1.38e10
+_SECONDS_PER_MINUTE: float = 60.0
+_SECONDS_PER_HOUR: float = 3_600.0
+_SECONDS_PER_DAY: float = 86_400.0
+_SECONDS_PER_YEAR: float = 31_557_600.0
+
+_KEYBOARD_ROWS: tuple[str, ...] = (
+    "qwertyuiop",
+    "asdfghjkl",
+    "zxcvbnm",
+    "1234567890",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _AttackerProfile:
+    label: str
+    guesses_per_second: float
+
+
+_ATTACKER_PROFILES: tuple[_AttackerProfile, ...] = (
+    _AttackerProfile("Online Throttled (100/s)", 100.0),
+    _AttackerProfile("Offline Argon2id GPU (1M/s)", 1_000_000.0),
+    _AttackerProfile("Offline SHA-256 ASIC (100B/s)", 100_000_000_000.0),
+)
+
+
+def format_duration(seconds: float) -> str:
+    """Convert a crack-time estimate in seconds into a readable human string."""
+    if seconds < 1.0:
+        return "Instantly (< 1 sec)"
+    if seconds < _SECONDS_PER_MINUTE:
+        return f"{seconds:.1f} sec"
+    if seconds < _SECONDS_PER_HOUR:
+        return f"{seconds / _SECONDS_PER_MINUTE:.1f} min"
+    if seconds < _SECONDS_PER_DAY:
+        return f"{seconds / _SECONDS_PER_HOUR:.1f} hours"
+    if seconds < _SECONDS_PER_YEAR:
+        return f"{seconds / _SECONDS_PER_DAY:.1f} days"
+
+    years = seconds / _SECONDS_PER_YEAR
+    if years < 1_000.0:
+        return f"{years:.1f} years"
+    if years < 1_000_000.0:
+        return f"{years / 1_000.0:.1f}k years"
+    if years < 1_000_000_000.0:
+        return f"{years / 1_000_000.0:.1f}M years"
+    if years <= _UNIVERSE_AGE_YEARS * 100.0:
+        return f"{years / 1_000_000_000.0:.1f}B years"
+
+    exponent = math.floor(math.log10(years))
+    mantissa = years / (10**exponent)
+    return f"{mantissa:.2f} x 10^{exponent} years (> universe age)"
+
+
+def estimate_charset_size(secret: str) -> int:
+    """Infer the effective character alphabet size observed in ``secret``."""
+    if not secret:
+        return 0
+
+    pool = 0
+    if any(ch.islower() and ch.isascii() for ch in secret):
+        pool += 26
+    if any(ch.isupper() and ch.isascii() for ch in secret):
+        pool += 26
+    if any(ch in DIGIT_CHARS for ch in secret):
+        pool += 10
+    if any(not ch.isalnum() and ch.isascii() and not ch.isspace() for ch in secret):
+        pool += max(len(DEFAULT_SYMBOL_CHARS), 32)
+    if any(ch.isspace() for ch in secret):
+        pool += 1
+    if any(not ch.isascii() for ch in secret):
+        pool += 128
+    return max(pool, len(set(secret)))
+
+
+def _count_adjacent_repeats(secret: str) -> int:
+    return sum(1 for i in range(1, len(secret)) if secret[i] == secret[i - 1])
+
+
+def _has_monotonic_run(secret: str, min_run: int = 4) -> bool:
+    """Detect ASCII ascending/descending sequences of length ``>= min_run``."""
+    if len(secret) < min_run:
+        return False
+    asc = 1
+    desc = 1
+    for idx in range(1, len(secret)):
+        diff = ord(secret[idx]) - ord(secret[idx - 1])
+        asc = asc + 1 if diff == 1 else 1
+        desc = desc + 1 if diff == -1 else 1
+        if asc >= min_run or desc >= min_run:
+            return True
+    return False
+
+
+def _has_keyboard_walk(secret: str, min_run: int = 4) -> bool:
+    """Detect common QWERTY keyboard row patterns of length ``>= min_run``."""
+    lowered = secret.lower()
+    if len(lowered) < min_run:
+        return False
+    for row in _KEYBOARD_ROWS:
+        reversed_row = row[::-1]
+        for start in range(len(row) - min_run + 1):
+            pattern = row[start : start + min_run]
+            rev_pattern = reversed_row[start : start + min_run]
+            if pattern in lowered or rev_pattern in lowered:
+                return True
+    return False
+
+
+def classify_tier(effective_bits: float) -> SecurityTier:
+    """Map effective entropy bits to a discrete security classification tier."""
+    if effective_bits < 40.0:
+        return SecurityTier.CRITICAL
+    if effective_bits < 60.0:
+        return SecurityTier.WEAK
+    if effective_bits < 80.0:
+        return SecurityTier.FAIR
+    if effective_bits < 112.0:
+        return SecurityTier.STRONG
+    if effective_bits < 128.0:
+        return SecurityTier.NEAR_UNBREAKABLE
+    return SecurityTier.QUANTUM_RESISTANT
+
+
+def evaluate_secret(
+    secret: str,
+    *,
+    known_entropy_bits: float | None = None,
+    charset_size_override: int | None = None,
+    skip_pattern_penalties: bool = False,
+) -> StrengthReport:
+    """Compute entropy, weakness penalties, score, tier, and brute-force crack estimates.
+
+    Args:
+        secret: Secret string to evaluate.
+        known_entropy_bits: Exact CSPRNG generation entropy in bits when generated by policy.
+        charset_size_override: Exact character-set or dictionary cardinality when known.
+        skip_pattern_penalties: Skip heuristic penalties (used for uniform CSPRNG tokens/words
+            where keyspace entropy is mathematically exact).
+    """
+    length = len(secret)
+    if length == 0:
+        empty_estimates = tuple(
+            AttackEstimate(
+                label=profile.label,
+                guesses_per_second=profile.guesses_per_second,
+                seconds_to_crack=0.0,
+                human_duration="Instantly (< 1 sec)",
+            )
+            for profile in _ATTACKER_PROFILES
+        )
+        return StrengthReport(
+            entropy_bits=0.0,
+            effective_bits=0.0,
+            score=0,
+            tier=SecurityTier.CRITICAL,
+            charset_size=0,
+            length=0,
+            warnings=("Secret is empty.",),
+            recommendations=("Generate a secret or enter text to analyze.",),
+            attack_estimates=empty_estimates,
+        )
+
+    charset_size = (
+        charset_size_override
+        if charset_size_override is not None
+        else estimate_charset_size(secret)
+    )
+    if known_entropy_bits is not None:
+        entropy_bits = max(0.0, known_entropy_bits)
+    else:
+        entropy_bits = length * math.log2(max(charset_size, 1))
+
+    penalty_bits = 0.0
+    warnings: list[str] = []
+    recommendations: list[str] = []
+
+    if not skip_pattern_penalties:
+        unique_ratio = len(set(secret)) / length
+        if length >= 6 and unique_ratio < 0.45:
+            penalty_bits += max(6.0, entropy_bits * 0.35)
+            warnings.append("Low character diversity: many characters repeat.")
+
+        adjacent_repeats = _count_adjacent_repeats(secret)
+        if adjacent_repeats >= 2:
+            penalty_bits += min(12.0, adjacent_repeats * 3.0)
+            warnings.append("Contains repeated adjacent characters.")
+
+        if _has_monotonic_run(secret):
+            penalty_bits += 12.0
+            warnings.append("Contains sequential character run (e.g., 1234 or abcd).")
+
+        if _has_keyboard_walk(secret):
+            penalty_bits += 14.0
+            warnings.append("Contains common keyboard walk pattern (e.g., qwerty).")
+
+    effective_bits = max(0.0, entropy_bits - penalty_bits)
+    if known_entropy_bits is None and length < 12:
+        recommendations.append("Use at least 16 characters for high-value accounts.")
+    if effective_bits < 80.0:
+        recommendations.append("Increase length or add more character classes to reach 80+ bits.")
+    elif effective_bits < 128.0:
+        recommendations.append(
+            "Strong today; aim for 128+ bits (20+ random chars) for long-term resilience."
+        )
+
+    if not warnings and effective_bits >= 112.0:
+        recommendations.append("Meets 2026 near-unbreakable offline brute-force resistance.")
+
+    score = min(100, max(0, round((effective_bits / 128.0) * 100.0)))
+    tier = classify_tier(effective_bits)
+
+    # Median (50%) search space is 2^(bits - 1). Clamp exponent to avoid float overflow.
+    median_exponent = max(0.0, effective_bits - 1.0)
+    estimates: list[AttackEstimate] = []
+    for profile in _ATTACKER_PROFILES:
+        log2_seconds = median_exponent - math.log2(profile.guesses_per_second)
+        if log2_seconds >= 1000.0:
+            seconds = float("inf")
+            human = format_duration(2.0**900)
+        elif log2_seconds < -10.0:
+            seconds = 0.0
+            human = "Instantly (< 1 sec)"
+        else:
+            seconds = 2.0**log2_seconds
+            human = format_duration(seconds)
+
+        estimates.append(
+            AttackEstimate(
+                label=profile.label,
+                guesses_per_second=profile.guesses_per_second,
+                seconds_to_crack=seconds,
+                human_duration=human,
+            )
+        )
+
+    return StrengthReport(
+        entropy_bits=round(entropy_bits, 2),
+        effective_bits=round(effective_bits, 2),
+        score=score,
+        tier=tier,
+        charset_size=charset_size,
+        length=length,
+        warnings=tuple(warnings),
+        recommendations=tuple(recommendations),
+        attack_estimates=tuple(estimates),
+    )

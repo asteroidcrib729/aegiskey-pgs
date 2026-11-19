@@ -1,0 +1,48 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "App: Launch AegisKey GUI",
+      "type": "shell",
+      "command": "uv run password-generator",
+      "problemMatcher": []
+    },
+    {
+      "label": "Ruff: Lint Check",
+      "type": "shell",
+      "command": "uv run ruff check .",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Ruff: Format Check",
+      "type": "shell",
+      "command": "uv run ruff format --check .",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Pyrefly: Type Check",
+      "type": "shell",
+      "command": "uv run pyrefly check",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Pytest: Run All Tests",
+      "type": "shell",
+      "command": "uv run pytest -v",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "UV: Sync Environment",
+      "type": "shell",
+      "command": "uv sync",
+      "problemMatcher": []
+    }
+  ]
+}
