@@ -34,7 +34,13 @@ from password_generator.core.presets import SECURITY_PRESETS, get_preset_by_key
 from password_generator.services.clipboard import ClipboardService
 from password_generator.services.history import SessionVaultService
 from password_generator.services.settings_store import AppPreferences, SettingsStore
-from password_generator.ui.dpi import apply_windows_titlebar_theme, configure_tk_scaling
+from password_generator.ui.dpi import (
+    apply_windows_surface_polish,
+    atomic_resize_redraw,
+    configure_tk_scaling,
+    release_window_brushes,
+    strip_layered_window_flag,
+)
 from password_generator.ui.icons import UiIconSet, build_ui_icons, create_app_icon
 from password_generator.ui.theme import (
     FontSet,
@@ -48,7 +54,6 @@ from password_generator.ui.widgets import (
     SessionVaultPanel,
     StrengthMeterCanvas,
     ToggleSwitch,
-    TouchpadScrollableFrame,
 )
 
 _SEPARATOR_OPTIONS: dict[str, str] = {
@@ -105,16 +110,18 @@ class PasswordGeneratorWindow:
 
         self._suppress_edit_trace = False
         self._suppress_policy_regeneration = False
+        self._in_configure_flush = False
+        self._last_root_size: tuple[int, int] = (0, 0)
         self._vault_record_after_id: str | None = None
         self._wrap_after_id: str | None = None
-        self._last_audit_wrap: int = self._px(360)
+        self._last_audit_wrap: int = self._px(380)
         self._last_generated: GeneratedSecret | None = None
         self._batch_items: list[GeneratedSecret] = []
         self._app_icon: tk.PhotoImage | None = None
+        self._header_shield_icon: tk.PhotoImage | None = None
         self._icons: UiIconSet | None = None
 
         # Registered theme-aware surfaces & widgets updated dynamically on theme toggle.
-        self._bordered_cards: list[tk.Frame] = []
         self._toggle_switches: list[ToggleSwitch] = []
         self._mode_buttons: dict[GenerationMode, ttk.Button] = {}
         self._mode_frames: dict[GenerationMode, ttk.Frame] = {}
@@ -131,11 +138,33 @@ class PasswordGeneratorWindow:
     def present(self) -> None:
         """Finalize layout and reveal the window cleanly without startup flash or artifacts."""
         self.root.update_idletasks()
-        self.root.deiconify()
-        apply_windows_titlebar_theme(self.root, dark=(self._theme_mode == "dark"))
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        req_w = self.root.winfo_reqwidth()
+        req_h = self.root.winfo_reqheight()
+        min_w = min(max(self._px(880), req_w), max(640, screen_w - self._px(40)))
+        min_h = min(max(self._px(540), req_h), max(460, screen_h - self._px(60)))
+        self.root.minsize(min_w, min_h)
+
+        cur_w = max(min_w, min(self._px(1080), screen_w - self._px(48)))
+        cur_h = max(min_h, min(self._px(630), screen_h - self._px(64)))
+        pos_x = max(0, (screen_w - cur_w) // 2)
+        pos_y = max(0, (screen_h - cur_h) // 2)
+        self.root.geometry(f"{cur_w}x{cur_h}+{pos_x}+{pos_y}")
+        self._last_root_size = (cur_w, cur_h)
         self.root.update_idletasks()
+
+        apply_windows_surface_polish(
+            self.root,
+            bg_hex=self._palette.bg_app,
+            child_bg_hex=self._palette.bg_surface,
+            dark=(self._theme_mode == "dark"),
+        )
+        self.root.deiconify()
+        self.root.update()
         with suppress(tk.TclError):
             self.root.attributes("-alpha", 1.0)
+        strip_layered_window_flag(self.root)
 
     def _init_variables(self) -> None:
         self._active_mode = GenerationMode.PASSWORD
@@ -195,14 +224,15 @@ class PasswordGeneratorWindow:
         self.root.configure(bg=self._palette.bg_app)
         with suppress(tk.TclError):
             self._app_icon = create_app_icon(scale=self._scale)
+            self._header_shield_icon = create_app_icon(scale=max(1.0, self._scale * 0.48))
             self.root.iconphoto(True, self._app_icon)
 
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
-        min_w = min(self._px(740), max(600, screen_w - self._px(40)))
-        min_h = min(self._px(480), max(440, screen_h - self._px(60)))
-        width = min(self._px(1140), max(min_w, screen_w - self._px(48)))
-        height = min(self._px(660), max(min_h, screen_h - self._px(64)))
+        min_w = min(self._px(880), max(640, screen_w - self._px(40)))
+        min_h = min(self._px(540), max(460, screen_h - self._px(60)))
+        width = min(self._px(1080), max(min_w, screen_w - self._px(48)))
+        height = min(self._px(630), max(min_h, screen_h - self._px(64)))
         pos_x = max(0, (screen_w - width) // 2)
         pos_y = max(0, (screen_h - height) // 2)
 
@@ -217,7 +247,7 @@ class PasswordGeneratorWindow:
         self._outer = ttk.Frame(
             self.root,
             style="App.TFrame",
-            padding=(self._px(16), self._px(11), self._px(16), self._px(12)),
+            padding=(self._px(12), self._px(6), self._px(12), self._px(8)),
         )
         self._outer.grid(row=0, column=0, sticky="nsew")
         self._outer.columnconfigure(0, weight=1)
@@ -227,7 +257,7 @@ class PasswordGeneratorWindow:
         self._build_hero_card(self._outer)
 
         body = ttk.Frame(self._outer, style="App.TFrame")
-        body.grid(row=2, column=0, sticky="nsew", pady=(self._px(10), 0))
+        body.grid(row=2, column=0, sticky="nsew", pady=(self._px(6), 0))
         body.columnconfigure(0, weight=5, uniform="cols")
         body.columnconfigure(1, weight=6, uniform="cols")
         body.rowconfigure(0, weight=1)
@@ -240,168 +270,135 @@ class PasswordGeneratorWindow:
         parent: tk.Misc,
         *,
         padding: tuple[int, int] | None = None,
-    ) -> tuple[tk.Frame, ttk.Frame]:
-        # Match bg to card interior so live resize invalidations never flash border color.
-        resolved_pad = padding if padding is not None else (self._px(13), self._px(10))
-        border_frame = tk.Frame(
-            parent,
-            bg=self._palette.bg_surface,
-            highlightthickness=1,
-            highlightbackground=self._palette.border,
-            bd=0,
-        )
-        border_frame.columnconfigure(0, weight=1)
-        border_frame.rowconfigure(0, weight=1)
-        self._bordered_cards.append(border_frame)
-
-        inner = ttk.Frame(border_frame, style="Card.TFrame", padding=resolved_pad)
-        inner.grid(row=0, column=0, sticky="nsew")
-        return border_frame, inner
+    ) -> tuple[ttk.Frame, ttk.Frame]:
+        resolved_pad = padding if padding is not None else (self._px(12), self._px(8))
+        card = ttk.Frame(parent, style="BorderedCard.TFrame", padding=resolved_pad)
+        return card, card
 
     def _build_header(self, parent: ttk.Frame) -> None:
         header = ttk.Frame(parent, style="App.TFrame")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        header.columnconfigure(0, weight=1)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, self._px(6)))
+        header.columnconfigure(1, weight=1)
 
-        left = ttk.Frame(header, style="App.TFrame")
-        left.grid(row=0, column=0, sticky="w")
+        if self._header_shield_icon is not None:
+            ttk.Label(header, image=self._header_shield_icon, style="App.TLabel").grid(
+                row=0, column=0, rowspan=2, sticky="w", padx=(0, self._px(10))
+            )
 
-        ttk.Label(left, text="AegisKey · Password Generator Studio", style="Title.TLabel").grid(
-            row=0, column=0, sticky="w"
+        ttk.Label(header, text="AegisKey · Password Studio", style="Title.TLabel").grid(
+            row=0, column=1, sticky="w"
         )
         ttk.Label(
-            left,
-            text="CSPRNG (secrets) · Zero Disk Secrets · Live Entropy & Attack Auditor",
+            header,
+            text="CSPRNG (secrets) · Zero Disk Secrets · Live Entropy Auditor",
             style="AppMuted.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(1, 0))
+        ).grid(row=1, column=1, sticky="w", pady=(1, 0))
 
-        right = ttk.Frame(header, style="App.TFrame")
-        right.grid(row=0, column=1, sticky="e")
-
-        ttk.Label(right, text="Preset:", style="AppMuted.TLabel").grid(row=0, column=0, padx=(0, 6))
+        ttk.Label(header, text="Preset:", style="AppMuted.TLabel").grid(
+            row=0, column=2, rowspan=2, padx=(self._px(12), self._px(6)), sticky="e"
+        )
         self._preset_combo = ttk.Combobox(
-            right,
+            header,
             textvariable=self._preset_var,
             values=[p.name for p in SECURITY_PRESETS],
             state="readonly",
-            width=27,
+            width=25,
             style="App.TCombobox",
         )
-        self._preset_combo.grid(row=0, column=1, padx=(0, 8))
+        self._preset_combo.grid(row=0, column=3, rowspan=2, padx=(0, self._px(8)), sticky="e")
         self._preset_combo.bind("<<ComboboxSelected>>", self._on_preset_selected)
 
         self._theme_btn = ttk.Button(
-            right,
-            text="Light Mode" if self._theme_mode == "dark" else "Dark Mode",
+            header,
+            text="Light" if self._theme_mode == "dark" else "Dark",
             style="Secondary.TButton",
             command=self.toggle_theme,
         )
-        self._theme_btn.grid(row=0, column=2, padx=(0, 6))
+        self._theme_btn.grid(row=0, column=4, rowspan=2, padx=(0, self._px(6)), sticky="e")
 
         self._help_btn = ttk.Button(
-            right,
-            text="Shortcuts (F1)",
+            header,
+            text="Help",
             style="Secondary.TButton",
             command=self._show_help_dialog,
         )
-        self._help_btn.grid(row=0, column=3)
+        self._help_btn.grid(row=0, column=5, rowspan=2, sticky="e")
 
     def _build_hero_card(self, parent: ttk.Frame) -> None:
-        card_border, card = self._create_card(parent, padding=(16, 14))
+        card_border, card = self._create_card(parent, padding=(self._px(12), self._px(7)))
         card_border.grid(row=1, column=0, sticky="ew")
         card.columnconfigure(0, weight=1)
 
         # Top info row
         top_bar = ttk.Frame(card, style="Card.TFrame")
-        top_bar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        top_bar.grid(row=0, column=0, sticky="ew", pady=(0, self._px(4)))
         top_bar.columnconfigure(0, weight=1)
 
         ttk.Label(top_bar, textvariable=self._summary_var, style="CardMuted.TLabel").grid(
             row=0, column=0, sticky="w"
         )
 
-        clip_box = ttk.Frame(top_bar, style="Card.TFrame")
-        clip_box.grid(row=0, column=1, sticky="e")
-
         self._clipboard_label = ttk.Label(
-            clip_box,
+            top_bar,
             textvariable=self._clipboard_status_var,
             style="CardMuted.TLabel",
         )
-        self._clipboard_label.grid(row=0, column=0, padx=(0, 8))
+        self._clipboard_label.grid(row=0, column=1, sticky="e", padx=(0, self._px(8)))
 
         self._clear_clip_btn = ttk.Button(
-            clip_box,
+            top_bar,
             text="Clear Clipboard",
             style="Secondary.TButton",
             command=self.clear_clipboard_now,
         )
-        self._clear_clip_btn.grid(row=0, column=1)
+        self._clear_clip_btn.grid(row=0, column=2, sticky="e")
 
         # Secret display + actions
         secret_row = ttk.Frame(card, style="Card.TFrame")
-        secret_row.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        secret_row.grid(row=1, column=0, sticky="ew", pady=(0, self._px(4)))
         secret_row.columnconfigure(0, weight=1)
 
-        self._secret_entry_border = tk.Frame(
+        self._secret_entry = ttk.Entry(
             secret_row,
-            bg=self._palette.bg_input,
-            highlightthickness=1,
-            highlightbackground=self._palette.border,
-            bd=0,
-        )
-        self._secret_entry_border.grid(row=0, column=0, sticky="ew", padx=(0, 10))
-        self._secret_entry_border.columnconfigure(0, weight=1)
-
-        self._secret_entry = tk.Entry(
-            self._secret_entry_border,
             textvariable=self._secret_var,
             font=self._fonts.secret_hero,
-            bg=self._palette.bg_input,
-            fg=self._palette.text_primary,
-            insertbackground=self._palette.text_primary,
-            relief="flat",
-            bd=self._px(6),
+            width=10,
+            style="Hero.TEntry",
             show="•" if self._masked_var.get() else "",
         )
-        self._secret_entry.grid(row=0, column=0, sticky="ew")
-        self._secret_entry.bind("<FocusIn>", lambda _e: self._set_entry_focus(focused=True))
-        self._secret_entry.bind("<FocusOut>", lambda _e: self._set_entry_focus(focused=False))
-
-        actions = ttk.Frame(secret_row, style="Card.TFrame")
-        actions.grid(row=0, column=1, sticky="e")
+        self._secret_entry.grid(row=0, column=0, sticky="ew", padx=(0, self._px(8)))
 
         self._generate_btn = ttk.Button(
-            actions,
+            secret_row,
             text="Generate",
             style="Primary.TButton",
             command=self.generate_current,
         )
-        self._generate_btn.grid(row=0, column=0, padx=(0, 6))
+        self._generate_btn.grid(row=0, column=1, padx=(0, self._px(5)))
 
         self._copy_btn = ttk.Button(
-            actions,
+            secret_row,
             text="Copy",
             style="Primary.TButton",
             command=self.copy_current_secret,
         )
-        self._copy_btn.grid(row=0, column=1, padx=(0, 6))
+        self._copy_btn.grid(row=0, column=2, padx=(0, self._px(5)))
 
         self._mask_btn = ttk.Button(
-            actions,
+            secret_row,
             text="Show" if self._masked_var.get() else "Hide",
             style="Secondary.TButton",
             command=self.toggle_mask,
         )
-        self._mask_btn.grid(row=0, column=2, padx=(0, 6))
+        self._mask_btn.grid(row=0, column=3, padx=(0, self._px(5)))
 
         self._batch_btn = ttk.Button(
-            actions,
-            text="5x Batch",
+            secret_row,
+            text="4x Batch",
             style="Secondary.TButton",
             command=self.generate_batch_candidates,
         )
-        self._batch_btn.grid(row=0, column=3)
+        self._batch_btn.grid(row=0, column=4)
 
         # Strength meter + metrics strip
         self._strength_meter = StrengthMeterCanvas(
@@ -409,48 +406,42 @@ class PasswordGeneratorWindow:
             palette=self._palette,
             scale=self._scale,
         )
-        self._strength_meter.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        self._strength_meter.grid(row=2, column=0, sticky="ew", pady=(0, self._px(5)))
 
         metrics_row = ttk.Frame(card, style="Card.TFrame")
         metrics_row.grid(row=3, column=0, sticky="ew")
         metrics_row.columnconfigure(1, weight=1)
 
-        self._tier_badge = tk.Label(
+        self._tier_badge = ttk.Label(
             metrics_row,
             text="STRENGTH",
-            font=self._fonts.caption_bold,
-            padx=8,
-            pady=2,
-            bg=self._palette.bg_elevated,
-            fg=self._palette.quantum,
+            style="TierBadge.TLabel",
         )
-        self._tier_badge.grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self._tier_badge.grid(row=0, column=0, sticky="w", padx=(0, self._px(8)))
 
         self._metrics_label = ttk.Label(metrics_row, text="", style="CardMuted.TLabel")
         self._metrics_label.grid(row=0, column=1, sticky="w")
 
-        self._error_label = tk.Label(
+        self._error_label = ttk.Label(
             metrics_row,
             textvariable=self._error_var,
-            font=self._fonts.caption_bold,
-            bg=self._palette.bg_surface,
-            fg=self._palette.danger,
+            style="Error.TLabel",
         )
         self._error_label.grid(row=0, column=2, sticky="e")
 
     def _build_policy_studio(self, parent: ttk.Frame) -> None:
-        card_border, card = self._create_card(parent, padding=(14, 12))
-        card_border.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        card_border, card = self._create_card(parent, padding=(self._px(12), self._px(7)))
+        card_border.grid(row=0, column=0, sticky="nsew", padx=(0, self._px(6)))
         card.columnconfigure(0, weight=1)
         card.rowconfigure(2, weight=1)
 
         ttk.Label(card, text="Generation Policy Studio", style="CardHeading.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 8)
+            row=0, column=0, sticky="w", pady=(0, self._px(4))
         )
 
         # Mode switcher row
         mode_bar = ttk.Frame(card, style="Card.TFrame")
-        mode_bar.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        mode_bar.grid(row=1, column=0, sticky="ew", pady=(0, self._px(5)))
         modes = (
             (GenerationMode.PASSWORD, "Password"),
             (GenerationMode.PASSPHRASE, "Passphrase"),
@@ -465,25 +456,20 @@ class PasswordGeneratorWindow:
                 style="ModeActive.TButton" if mode == self._active_mode else "ModeInactive.TButton",
                 command=partial(self.switch_mode, mode),
             )
-            btn.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 4, 0))
+            btn.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else self._px(4), 0))
             self._mode_buttons[mode] = btn
 
-        # Scrollable stacked mode container with two-finger touchpad support
-        self._policy_scroll = TouchpadScrollableFrame(card, bg=self._palette.bg_surface)
-        self._policy_scroll.grid(row=2, column=0, sticky="nsew")
-        stack = self._policy_scroll.content
-        stack.columnconfigure(0, weight=1)
-
-        self._mode_frames[GenerationMode.PASSWORD] = self._build_password_panel(stack)
-        self._mode_frames[GenerationMode.PASSPHRASE] = self._build_passphrase_panel(stack)
-        self._mode_frames[GenerationMode.TOKEN] = self._build_token_panel(stack)
-        self._mode_frames[GenerationMode.PIN] = self._build_pin_panel(stack)
+        # Direct child mode panels in row 2 minimize nested HWND layout depth.
+        self._mode_frames[GenerationMode.PASSWORD] = self._build_password_panel(card)
+        self._mode_frames[GenerationMode.PASSPHRASE] = self._build_passphrase_panel(card)
+        self._mode_frames[GenerationMode.TOKEN] = self._build_token_panel(card)
+        self._mode_frames[GenerationMode.PIN] = self._build_pin_panel(card)
 
         self._show_mode_panel(self._active_mode)
 
         # Footer clipboard auto-clear hygiene setting
         footer = ttk.Frame(card, style="Card.TFrame")
-        footer.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        footer.grid(row=3, column=0, sticky="ew", pady=(self._px(4), 0))
         footer.columnconfigure(0, weight=1)
 
         ttk.Label(footer, text="Auto-Clear Clipboard After Copy:", style="CardMuted.TLabel").grid(
@@ -494,7 +480,7 @@ class PasswordGeneratorWindow:
             textvariable=self._clipboard_timeout_var,
             values=list(_CLIPBOARD_TIMEOUT_LABELS),
             state="readonly",
-            width=14,
+            width=12,
             style="App.TCombobox",
         )
         timeout_combo.grid(row=0, column=1, sticky="e")
@@ -508,22 +494,31 @@ class PasswordGeneratorWindow:
         label: str,
         variable: tk.BooleanVar,
     ) -> None:
-        cell = ttk.Frame(parent, style="Card.TFrame")
-        cell.grid(row=row, column=col, sticky="ew", padx=(0, 8), pady=5)
-        cell.columnconfigure(1, weight=1)
-
+        base_col = col * 2
         switch = ToggleSwitch(
-            cell,
+            parent,
             variable=variable,
             palette=self._palette,
             scale=self._scale,
             command=self._on_policy_changed,
         )
-        switch.grid(row=0, column=0, padx=(0, 8))
+        switch.grid(
+            row=row,
+            column=base_col,
+            sticky="w",
+            padx=(0, self._px(6)),
+            pady=self._px(1),
+        )
         self._toggle_switches.append(switch)
 
-        lbl = ttk.Label(cell, text=label, style="Card.TLabel", cursor="hand2")
-        lbl.grid(row=0, column=1, sticky="w")
+        lbl = ttk.Label(parent, text=label, style="Card.TLabel", cursor="hand2")
+        lbl.grid(
+            row=row,
+            column=base_col + 1,
+            sticky="w",
+            padx=(0, self._px(8)),
+            pady=self._px(1),
+        )
         lbl.bind("<Button-1>", lambda _e: self._flip_bool_var(variable))
 
     def _flip_bool_var(self, variable: tk.BooleanVar) -> None:
@@ -538,12 +533,13 @@ class PasswordGeneratorWindow:
     ) -> ttk.Frame:
         row = ttk.Frame(parent, style="Card.TFrame")
         for idx, val in enumerate(values):
+            row.columnconfigure(idx, weight=1)
             ttk.Button(
                 row,
                 text=str(val),
-                style="Secondary.TButton",
+                style="Pill.TButton",
                 command=partial(self._set_int_var, var, val),
-            ).grid(row=0, column=idx, padx=(0 if idx == 0 else 4, 0))
+            ).grid(row=0, column=idx, sticky="ew", padx=(0 if idx == 0 else self._px(4), 0))
         return row
 
     def _set_int_var(self, var: tk.IntVar, value: int) -> None:
@@ -583,18 +579,18 @@ class PasswordGeneratorWindow:
             style="App.Horizontal.TScale",
             command=lambda raw: self._on_scale_drag(self._pwd_length_var, raw),
         )
-        scale.grid(row=1, column=0, sticky="ew", pady=(6, 6))
+        scale.grid(row=1, column=0, sticky="ew", pady=(self._px(2), self._px(2)))
 
         quick = self._add_quick_length_buttons(
             panel, (12, 16, 20, 24, 32, 64), self._pwd_length_var
         )
-        quick.grid(row=2, column=0, sticky="w", pady=(0, 12))
+        quick.grid(row=2, column=0, sticky="ew", pady=(0, self._px(4)))
 
         # Character class & hygiene switches
         switches = ttk.Frame(panel, style="Card.TFrame")
-        switches.grid(row=3, column=0, sticky="ew", pady=(0, 10))
-        switches.columnconfigure(0, weight=1)
+        switches.grid(row=3, column=0, sticky="ew", pady=(0, self._px(4)))
         switches.columnconfigure(1, weight=1)
+        switches.columnconfigure(3, weight=1)
 
         self._add_toggle_row(switches, 0, 0, "Uppercase (A-Z)", self._pwd_upper_var)
         self._add_toggle_row(switches, 0, 1, "Lowercase (a-z)", self._pwd_lower_var)
@@ -606,30 +602,30 @@ class PasswordGeneratorWindow:
 
         # Custom symbol & exclusion inputs
         inputs = ttk.Frame(panel, style="Card.TFrame")
-        inputs.grid(row=4, column=0, sticky="ew", pady=(4, 0))
+        inputs.grid(row=4, column=0, sticky="ew", pady=(self._px(2), 0))
         inputs.columnconfigure(1, weight=1)
 
         ttk.Label(inputs, text="Custom Symbols:", style="CardMuted.TLabel").grid(
-            row=0, column=0, sticky="w", pady=4, padx=(0, 8)
+            row=0, column=0, sticky="w", pady=self._px(2), padx=(0, self._px(8))
         )
         sym_entry = ttk.Entry(
             inputs,
             textvariable=self._pwd_custom_symbols_var,
             style="App.TEntry",
         )
-        sym_entry.grid(row=0, column=1, sticky="ew", pady=4)
+        sym_entry.grid(row=0, column=1, sticky="ew", pady=self._px(2))
         sym_entry.bind("<FocusOut>", lambda _e: self._on_policy_changed())
         sym_entry.bind("<Return>", lambda _e: self._on_policy_changed())
 
         ttk.Label(inputs, text="Exclude Characters:", style="CardMuted.TLabel").grid(
-            row=1, column=0, sticky="w", pady=4, padx=(0, 8)
+            row=1, column=0, sticky="w", pady=self._px(2), padx=(0, self._px(8))
         )
         excl_entry = ttk.Entry(
             inputs,
             textvariable=self._pwd_excluded_var,
             style="App.TEntry",
         )
-        excl_entry.grid(row=1, column=1, sticky="ew", pady=4)
+        excl_entry.grid(row=1, column=1, sticky="ew", pady=self._px(2))
         excl_entry.bind("<FocusOut>", lambda _e: self._on_policy_changed())
         excl_entry.bind("<Return>", lambda _e: self._on_policy_changed())
 
@@ -656,7 +652,7 @@ class PasswordGeneratorWindow:
         )
         spin.grid(row=0, column=1, sticky="e")
 
-        ttk.Scale(
+        scale_p = ttk.Scale(
             panel,
             from_=MIN_PASSPHRASE_WORDS,
             to=MAX_PASSPHRASE_WORDS,
@@ -664,18 +660,19 @@ class PasswordGeneratorWindow:
             variable=self._phrase_words_var,
             style="App.Horizontal.TScale",
             command=lambda raw: self._on_scale_drag(self._phrase_words_var, raw),
-        ).grid(row=1, column=0, sticky="ew", pady=(6, 6))
+        )
+        scale_p.grid(row=1, column=0, sticky="ew", pady=(self._px(4), self._px(4)))
 
         self._add_quick_length_buttons(panel, (4, 6, 7, 8, 10, 12), self._phrase_words_var).grid(
-            row=2, column=0, sticky="w", pady=(0, 12)
+            row=2, column=0, sticky="ew", pady=(0, self._px(8))
         )
 
         opts = ttk.Frame(panel, style="Card.TFrame")
-        opts.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        opts.grid(row=3, column=0, sticky="ew", pady=(0, self._px(6)))
         opts.columnconfigure(1, weight=1)
 
         ttk.Label(opts, text="Separator:", style="CardMuted.TLabel").grid(
-            row=0, column=0, sticky="w", pady=5, padx=(0, 10)
+            row=0, column=0, sticky="w", pady=self._px(3), padx=(0, self._px(8))
         )
         sep_combo = ttk.Combobox(
             opts,
@@ -684,11 +681,11 @@ class PasswordGeneratorWindow:
             state="readonly",
             style="App.TCombobox",
         )
-        sep_combo.grid(row=0, column=1, sticky="ew", pady=5)
+        sep_combo.grid(row=0, column=1, sticky="ew", pady=self._px(3))
         sep_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_policy_changed())
 
         ttk.Label(opts, text="Word Casing:", style="CardMuted.TLabel").grid(
-            row=1, column=0, sticky="w", pady=5, padx=(0, 10)
+            row=1, column=0, sticky="w", pady=self._px(3), padx=(0, self._px(8))
         )
         case_combo = ttk.Combobox(
             opts,
@@ -697,13 +694,13 @@ class PasswordGeneratorWindow:
             state="readonly",
             style="App.TCombobox",
         )
-        case_combo.grid(row=1, column=1, sticky="ew", pady=5)
+        case_combo.grid(row=1, column=1, sticky="ew", pady=self._px(3))
         case_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_policy_changed())
 
         switches = ttk.Frame(panel, style="Card.TFrame")
-        switches.grid(row=4, column=0, sticky="ew", pady=(4, 0))
-        switches.columnconfigure(0, weight=1)
+        switches.grid(row=4, column=0, sticky="ew", pady=(self._px(4), 0))
         switches.columnconfigure(1, weight=1)
+        switches.columnconfigure(3, weight=1)
         self._add_toggle_row(switches, 0, 0, "Append Random Digit", self._phrase_digit_var)
         self._add_toggle_row(switches, 0, 1, "Append Random Symbol", self._phrase_symbol_var)
 
@@ -717,7 +714,7 @@ class PasswordGeneratorWindow:
             row=0, column=0, sticky="w", pady=(0, 6)
         )
         self._add_quick_length_buttons(panel, (128, 192, 256, 384, 512), self._token_bits_var).grid(
-            row=1, column=0, sticky="w", pady=(0, 14)
+            row=1, column=0, sticky="ew", pady=(0, self._px(10))
         )
 
         opts = ttk.Frame(panel, style="Card.TFrame")
@@ -776,12 +773,12 @@ class PasswordGeneratorWindow:
         ).grid(row=1, column=0, sticky="ew", pady=(6, 6))
 
         self._add_quick_length_buttons(panel, (4, 6, 8, 10, 12, 16), self._pin_length_var).grid(
-            row=2, column=0, sticky="w", pady=(0, 12)
+            row=2, column=0, sticky="ew", pady=(0, self._px(8))
         )
 
         switches = ttk.Frame(panel, style="Card.TFrame")
         switches.grid(row=3, column=0, sticky="ew")
-        switches.columnconfigure(0, weight=1)
+        switches.columnconfigure(1, weight=1)
         self._add_toggle_row(switches, 0, 0, "Block Sequences (123, 987)", self._pin_no_seq_var)
         self._add_toggle_row(switches, 1, 0, "Block Repeated Digits", self._pin_no_rep_var)
 
@@ -789,7 +786,7 @@ class PasswordGeneratorWindow:
 
     def _build_right_column(self, parent: ttk.Frame) -> None:
         right = ttk.Frame(parent, style="App.TFrame")
-        right.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        right.grid(row=0, column=1, sticky="nsew", padx=(self._px(6), 0))
         right.columnconfigure(0, weight=1)
         right.rowconfigure(2, weight=1)
 
@@ -798,60 +795,53 @@ class PasswordGeneratorWindow:
         self._build_vault_card(right)
 
     def _build_audit_card(self, parent: ttk.Frame) -> None:
-        border, card = self._create_card(parent, padding=(14, 10))
-        border.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        border, card = self._create_card(parent, padding=(self._px(12), self._px(6)))
+        border.grid(row=0, column=0, sticky="ew", pady=(0, self._px(6)))
         card.columnconfigure(0, weight=1)
         self._audit_card = card
 
         ttk.Label(
             card, text="2026 Brute-Force Resistance & Audit", style="CardHeading.TLabel"
-        ).grid(row=0, column=0, sticky="w", pady=(0, 6))
-
-        self._attack_rows_frame = ttk.Frame(card, style="Card.TFrame")
-        self._attack_rows_frame.grid(row=1, column=0, sticky="ew")
-        self._attack_rows_frame.columnconfigure(0, weight=1)
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, self._px(3)))
 
         self._attack_value_labels: list[tuple[ttk.Label, ttk.Label]] = []
         for idx in range(3):
-            lbl_left = ttk.Label(self._attack_rows_frame, text="", style="CardMuted.TLabel")
-            lbl_right = ttk.Label(self._attack_rows_frame, text="", style="Card.TLabel")
-            lbl_left.grid(row=idx, column=0, sticky="w", pady=2)
-            lbl_right.grid(row=idx, column=1, sticky="e", pady=2)
+            lbl_left = ttk.Label(card, text="", style="CardMuted.TLabel")
+            lbl_right = ttk.Label(card, text="", style="Card.TLabel")
+            lbl_left.grid(row=idx + 1, column=0, sticky="w", pady=0)
+            lbl_right.grid(row=idx + 1, column=1, sticky="e", pady=0)
             self._attack_value_labels.append((lbl_left, lbl_right))
 
-        self._audit_notes_label = tk.Label(
+        self._audit_notes_label = ttk.Label(
             card,
             text="",
             justify="left",
             anchor="w",
             wraplength=self._last_audit_wrap,
-            font=self._fonts.caption,
-            bg=self._palette.bg_surface,
-            fg=self._palette.text_secondary,
+            style="CardMuted.TLabel",
         )
-        self._audit_notes_label.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        self._audit_notes_label.grid(
+            row=4, column=0, columnspan=2, sticky="ew", pady=(self._px(3), 0)
+        )
         card.bind("<Configure>", self._on_audit_card_configure)
 
     def _build_batch_card(self, parent: ttk.Frame) -> None:
-        border, card = self._create_card(parent, padding=(14, 10))
-        border.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        border, card = self._create_card(parent, padding=(self._px(12), self._px(6)))
+        border.grid(row=1, column=0, sticky="ew", pady=(0, self._px(6)))
         card.columnconfigure(0, weight=1)
 
-        header = ttk.Frame(card, style="Card.TFrame")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        header.columnconfigure(0, weight=1)
-        ttk.Label(header, text="Quick Batch Candidates", style="CardHeading.TLabel").grid(
-            row=0, column=0, sticky="w"
+        ttk.Label(card, text="Quick Batch Candidates", style="CardHeading.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, self._px(4))
         )
         ttk.Button(
-            header,
-            text="Refresh 5x",
+            card,
+            text="Refresh 4x",
             style="Secondary.TButton",
             command=self.generate_batch_candidates,
-        ).grid(row=0, column=1, sticky="e")
+        ).grid(row=0, column=1, sticky="e", pady=(0, self._px(4)))
 
         self._batch_rows_frame = ttk.Frame(card, style="Card.TFrame")
-        self._batch_rows_frame.grid(row=1, column=0, sticky="ew")
+        self._batch_rows_frame.grid(row=1, column=0, columnspan=2, sticky="ew")
         self._batch_rows_frame.columnconfigure(0, weight=1)
 
     def _build_vault_card(self, parent: ttk.Frame) -> None:
@@ -885,15 +875,45 @@ class PasswordGeneratorWindow:
         self.root.bind("<Control-l>", lambda _e: self.clear_clipboard_now())
         self.root.bind("<Control-L>", lambda _e: self.clear_clipboard_now())
         self.root.bind("<F1>", lambda _e: self._show_help_dialog())
+        self.root.bind("<Configure>", self._on_root_configure, add="+")
+
+    def _on_root_configure(self, event: tk.Event[tk.Misc]) -> None:
+        if event.widget is not self.root or self._in_configure_flush:
+            return
+        if self.root.state() == "withdrawn":
+            return
+        size = (event.width, event.height)
+        if size == self._last_root_size:
+            return
+        self._last_root_size = size
+        self._in_configure_flush = True
+        try:
+            body_w = max(self._px(400), event.width - self._px(24))
+            est_card_w = round(body_w * (6 / 11)) - self._px(30)
+            target_wrap = max(self._px(180), est_card_w - self._px(26))
+            if abs(target_wrap - self._last_audit_wrap) >= self._px(10):
+                self._last_audit_wrap = target_wrap
+                self._audit_notes_label.configure(wraplength=target_wrap)
+            atomic_resize_redraw(self.root, self.root.update_idletasks)
+        finally:
+            self._in_configure_flush = False
 
     def _on_audit_card_configure(self, event: tk.Event[tk.Misc]) -> None:
-        target_wrap = max(self._px(200), event.width - self._px(30))
+        if self._in_configure_flush:
+            return
+        target_wrap = max(self._px(180), event.width - self._px(26))
         if abs(target_wrap - self._last_audit_wrap) >= self._px(10) and self._wrap_after_id is None:
             self._wrap_after_id = self.root.after_idle(self._apply_audit_wrap)
 
     def _apply_audit_wrap(self) -> None:
-        self._wrap_after_id = None
-        target_wrap = max(self._px(200), self._audit_card.winfo_width() - self._px(30))
+        if self._wrap_after_id is not None:
+            with suppress(tk.TclError):
+                self.root.after_cancel(self._wrap_after_id)
+            self._wrap_after_id = None
+        card_w = self._audit_card.winfo_width()
+        if card_w <= 1:
+            return
+        target_wrap = max(self._px(180), card_w - self._px(26))
         if abs(target_wrap - self._last_audit_wrap) >= self._px(10):
             self._last_audit_wrap = target_wrap
             self._audit_notes_label.configure(wraplength=target_wrap)
@@ -901,11 +921,9 @@ class PasswordGeneratorWindow:
     def _show_mode_panel(self, active_mode: GenerationMode) -> None:
         for mode, frame in self._mode_frames.items():
             if mode == active_mode:
-                frame.grid(row=0, column=0, sticky="nsew")
+                frame.grid(row=2, column=0, sticky="nsew")
             else:
                 frame.grid_remove()
-        self._policy_scroll.canvas.yview_moveto(0.0)
-        self._policy_scroll.sync_scroll_region()
 
     def _apply_theme(self) -> None:
         self._palette = get_palette(self._theme_mode)
@@ -925,29 +943,18 @@ class PasswordGeneratorWindow:
         self.root.option_add("*TCombobox*Listbox.selectBackground", p.accent)
         self.root.option_add("*TCombobox*Listbox.selectForeground", p.accent_fg)
 
-        for frame in self._bordered_cards:
-            frame.configure(bg=p.bg_surface, highlightbackground=p.border)
         for switch in self._toggle_switches:
             switch.set_palette(p)
 
-        self._policy_scroll.set_background(p.bg_surface)
-        self._secret_entry_border.configure(bg=p.bg_input, highlightbackground=p.border)
-        self._secret_entry.configure(
-            bg=p.bg_input,
-            fg=p.text_primary,
-            insertbackground=p.text_primary,
-        )
         self._strength_meter.set_palette(p)
         self._vault_panel.set_palette(p, wipe_icon=self._icons.wipe)
-        self._error_label.configure(bg=p.bg_surface, fg=p.danger)
-        self._audit_notes_label.configure(bg=p.bg_surface, fg=p.text_secondary)
 
         self._generate_btn.configure(image=self._icons.generate, compound="left")
         self._copy_btn.configure(image=self._icons.copy, compound="left")
         self._batch_btn.configure(image=self._icons.batch, compound="left")
         self._help_btn.configure(image=self._icons.help_icon, compound="left")
         self._theme_btn.configure(
-            text="Light Mode" if self._theme_mode == "dark" else "Dark Mode",
+            text="Light" if self._theme_mode == "dark" else "Dark",
             image=self._icons.theme,
             compound="left",
         )
@@ -957,7 +964,12 @@ class PasswordGeneratorWindow:
             self._update_report_view(self._last_generated.report)
 
         if self.root.state() != "withdrawn":
-            apply_windows_titlebar_theme(self.root, dark=(self._theme_mode == "dark"))
+            apply_windows_surface_polish(
+                self.root,
+                bg_hex=p.bg_app,
+                child_bg_hex=p.bg_surface,
+                dark=(self._theme_mode == "dark"),
+            )
 
     def _refresh_mask_button(self) -> None:
         masked = self._masked_var.get()
@@ -976,10 +988,6 @@ class PasswordGeneratorWindow:
         self._theme_mode = "light" if self._theme_mode == "dark" else "dark"
         self._apply_theme()
         self._save_preferences()
-
-    def _set_entry_focus(self, *, focused: bool) -> None:
-        color = self._palette.border_focus if focused else self._palette.border
-        self._secret_entry_border.configure(bg=self._palette.bg_input, highlightbackground=color)
 
     def toggle_mask(self) -> None:
         """Toggle visibility of the active secret display."""
@@ -1168,11 +1176,11 @@ class PasswordGeneratorWindow:
         self._vault_record_after_id = self.root.after(400, _commit)
 
     def generate_batch_candidates(self) -> None:
-        """Generate 5 distinct candidates for the active policy and update the batch list."""
+        """Generate 4 distinct candidates for the active policy and update the batch list."""
         try:
             items = generate_batch(
                 self._active_mode,
-                5,
+                4,
                 password_policy=self._current_password_policy()
                 if self._active_mode == GenerationMode.PASSWORD
                 else None,
@@ -1198,9 +1206,9 @@ class PasswordGeneratorWindow:
             child.destroy()
 
         masked = self._masked_var.get()
-        pad_x = self._px(8)
-        pad_y = self._px(4)
-        gap_y = self._px(3)
+        pad_x = self._px(6)
+        pad_y = 0
+        gap_y = self._px(1)
         for idx, item in enumerate(self._batch_items):
             row = ttk.Frame(self._batch_rows_frame, style="Elevated.TFrame", padding=(pad_x, pad_y))
             row.grid(row=idx, column=0, sticky="ew", pady=(0, gap_y))
@@ -1219,7 +1227,7 @@ class PasswordGeneratorWindow:
             ttk.Button(
                 row,
                 text="Copy",
-                style="Secondary.TButton",
+                style="BatchPill.TButton",
                 command=partial(self._copy_and_load_batch, item),
             ).grid(row=0, column=2, sticky="e")
 
@@ -1254,8 +1262,7 @@ class PasswordGeneratorWindow:
         tier_color = self._strength_meter.tier_color(report.tier)
         self._tier_badge.configure(
             text=report.tier.upper(),
-            bg=self._palette.bg_elevated,
-            fg=tier_color,
+            foreground=tier_color,
         )
         self._metrics_label.configure(
             text=(
@@ -1278,7 +1285,7 @@ class PasswordGeneratorWindow:
             notes.append("✓ Passes 2026 entropy & pattern checks with zero detected weaknesses.")
         self._audit_notes_label.configure(
             text="\n".join(notes),
-            fg=self._palette.warning if report.warnings else self._palette.text_secondary,
+            foreground=self._palette.warning if report.warnings else self._palette.text_secondary,
         )
 
     def copy_current_secret(self) -> None:
@@ -1352,7 +1359,7 @@ class PasswordGeneratorWindow:
         help_text = (
             "Ctrl+G         Generate new CSPRNG secret\n"
             "Ctrl+Shift+C   Copy active secret & start auto-wipe timer\n"
-            "Ctrl+B         Refresh 5x batch candidates\n"
+            "Ctrl+B         Refresh 4x batch candidates\n"
             "Ctrl+M         Toggle secret masking (Show / Hide)\n"
             "Ctrl+L         Clear OS clipboard immediately\n"
             "Ctrl+T         Switch Obsidian Dark / Studio Light theme\n"
@@ -1363,19 +1370,27 @@ class PasswordGeneratorWindow:
             "• Session Vault lives strictly in RAM and is wiped on exit.\n"
             "• Clipboard auto-wipe verifies content before clearing so external copies stay safe."
         )
-        tk.Label(
+        ttk.Label(
             frame,
             text=help_text,
             justify="left",
+            style="CardMuted.TLabel",
             font=self._fonts.mono_small,
-            bg=self._palette.bg_surface,
-            fg=self._palette.text_secondary,
-        ).grid(row=1, column=0, sticky="w", pady=(0, 12))
+        ).grid(row=1, column=0, sticky="w", pady=(0, self._px(12)))
 
         ttk.Button(frame, text="Close", style="Primary.TButton", command=dialog.destroy).grid(
             row=2, column=0, sticky="e"
         )
-        apply_windows_titlebar_theme(dialog, dark=(self._theme_mode == "dark"))
+        apply_windows_surface_polish(
+            dialog,
+            bg_hex=self._palette.bg_surface,
+            dark=(self._theme_mode == "dark"),
+        )
+        dialog.bind(
+            "<Destroy>",
+            lambda e: release_window_brushes(dialog) if e.widget is dialog else None,
+            add="+",
+        )
 
     def _on_close(self) -> None:
         # Hide window first so child teardown never paints visual artifacts.
@@ -1392,4 +1407,5 @@ class PasswordGeneratorWindow:
         self._clipboard.cancel_timer()
         self._vault.wipe()
         self._save_preferences()
+        release_window_brushes(self.root)
         self.root.destroy()

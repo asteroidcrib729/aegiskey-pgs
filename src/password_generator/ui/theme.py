@@ -185,8 +185,17 @@ def apply_ttk_theme(
     )
 
     style.configure("App.TFrame", background=palette.bg_app)
-    style.configure("Card.TFrame", background=palette.bg_surface)
-    style.configure("Elevated.TFrame", background=palette.bg_elevated)
+    style.configure("Card.TFrame", background=palette.bg_surface, borderwidth=0)
+    style.configure(
+        "BorderedCard.TFrame",
+        background=palette.bg_surface,
+        bordercolor=palette.border,
+        lightcolor=palette.border,
+        darkcolor=palette.border,
+        borderwidth=1,
+        relief="solid",
+    )
+    style.configure("Elevated.TFrame", background=palette.bg_elevated, borderwidth=0)
 
     style.configure("App.TLabel", background=palette.bg_app, foreground=palette.text_primary)
     style.configure(
@@ -211,6 +220,19 @@ def apply_ttk_theme(
         font=fonts.caption,
     )
     style.configure(
+        "Error.TLabel",
+        background=palette.bg_surface,
+        foreground=palette.danger,
+        font=fonts.caption_bold,
+    )
+    style.configure(
+        "TierBadge.TLabel",
+        background=palette.bg_elevated,
+        foreground=palette.quantum,
+        font=fonts.caption_bold,
+        padding=(_p(8), _p(2)),
+    )
+    style.configure(
         "Elevated.TLabel",
         background=palette.bg_elevated,
         foreground=palette.text_primary,
@@ -229,7 +251,7 @@ def apply_ttk_theme(
         font=fonts.mono_small,
     )
 
-    # Crisp flat 1px buttons (removes retro clam 3D bevels)
+    # Crisp flat 1px buttons (width=0 overrides clam's -11 char default bloat)
     style.configure(
         "Primary.TButton",
         background=palette.accent,
@@ -239,7 +261,8 @@ def apply_ttk_theme(
         darkcolor=palette.accent,
         borderwidth=1,
         focusthickness=1,
-        padding=(_p(12), _p(6)),
+        width=0,
+        padding=(_p(10), _p(5)),
         font=fonts.body_bold,
         relief="flat",
     )
@@ -260,12 +283,57 @@ def apply_ttk_theme(
         darkcolor=palette.border,
         borderwidth=1,
         focusthickness=1,
-        padding=(_p(10), _p(5)),
+        width=0,
+        padding=(_p(8), _p(4)),
         font=fonts.caption_bold,
         relief="flat",
     )
     style.map(
         "Secondary.TButton",
+        background=[("active", palette.border), ("pressed", palette.border)],
+        bordercolor=[("focus", palette.border_focus), ("active", palette.border_focus)],
+        lightcolor=[("focus", palette.border_focus)],
+        darkcolor=[("focus", palette.border_focus)],
+    )
+
+    style.configure(
+        "Pill.TButton",
+        background=palette.bg_elevated,
+        foreground=palette.text_primary,
+        bordercolor=palette.border,
+        lightcolor=palette.border,
+        darkcolor=palette.border,
+        borderwidth=1,
+        focusthickness=1,
+        width=0,
+        padding=(_p(7), _p(2)),
+        font=fonts.caption_bold,
+        relief="flat",
+    )
+    style.map(
+        "Pill.TButton",
+        background=[("active", palette.border), ("pressed", palette.border)],
+        bordercolor=[("focus", palette.border_focus), ("active", palette.border_focus)],
+        lightcolor=[("focus", palette.border_focus)],
+        darkcolor=[("focus", palette.border_focus)],
+    )
+
+    style.configure(
+        "BatchPill.TButton",
+        background=palette.bg_elevated,
+        foreground=palette.text_primary,
+        bordercolor=palette.border,
+        lightcolor=palette.border,
+        darkcolor=palette.border,
+        borderwidth=1,
+        focusthickness=0,
+        width=0,
+        padding=(_p(6), 0),
+        font=fonts.caption_bold,
+        relief="flat",
+    )
+    style.map(
+        "BatchPill.TButton",
         background=[("active", palette.border), ("pressed", palette.border)],
         bordercolor=[("focus", palette.border_focus), ("active", palette.border_focus)],
         lightcolor=[("focus", palette.border_focus)],
@@ -280,7 +348,8 @@ def apply_ttk_theme(
         lightcolor=palette.border,
         darkcolor=palette.border,
         borderwidth=1,
-        padding=(_p(10), _p(5)),
+        width=0,
+        padding=(_p(8), _p(4)),
         font=fonts.caption_bold,
         relief="flat",
     )
@@ -299,7 +368,8 @@ def apply_ttk_theme(
         lightcolor=palette.accent,
         darkcolor=palette.accent,
         borderwidth=1,
-        padding=(_p(10), _p(6)),
+        width=0,
+        padding=(_p(8), _p(4)),
         font=fonts.caption_bold,
         relief="flat",
     )
@@ -316,7 +386,8 @@ def apply_ttk_theme(
         lightcolor=palette.border,
         darkcolor=palette.border,
         borderwidth=1,
-        padding=(_p(10), _p(6)),
+        width=0,
+        padding=(_p(8), _p(4)),
         font=fonts.caption_bold,
         relief="flat",
     )
@@ -336,10 +407,28 @@ def apply_ttk_theme(
         lightcolor=palette.border,
         darkcolor=palette.border,
         borderwidth=1,
-        padding=(_p(8), _p(5)),
+        padding=(_p(7), _p(3)),
     )
     style.map(
         "App.TEntry",
+        bordercolor=[("focus", palette.border_focus)],
+        lightcolor=[("focus", palette.border_focus)],
+        darkcolor=[("focus", palette.border_focus)],
+    )
+
+    style.configure(
+        "Hero.TEntry",
+        fieldbackground=palette.bg_input,
+        foreground=palette.text_primary,
+        insertcolor=palette.text_primary,
+        bordercolor=palette.border,
+        lightcolor=palette.border,
+        darkcolor=palette.border,
+        borderwidth=1,
+        padding=(_p(8), _p(4)),
+    )
+    style.map(
+        "Hero.TEntry",
         bordercolor=[("focus", palette.border_focus)],
         lightcolor=[("focus", palette.border_focus)],
         darkcolor=[("focus", palette.border_focus)],
@@ -429,4 +518,39 @@ def apply_ttk_theme(
         background=[("active", palette.text_muted), ("pressed", palette.accent)],
         lightcolor=[("active", palette.text_muted)],
         darkcolor=[("active", palette.text_muted)],
+    )
+
+    style.configure(
+        "Vault.Treeview",
+        background=palette.bg_elevated,
+        fieldbackground=palette.bg_elevated,
+        foreground=palette.text_primary,
+        bordercolor=palette.border,
+        lightcolor=palette.bg_elevated,
+        darkcolor=palette.bg_elevated,
+        borderwidth=1,
+        relief="flat",
+        font=fonts.mono_small,
+        rowheight=max(22, round(22 * s)),
+    )
+    style.map(
+        "Vault.Treeview",
+        background=[("selected", palette.accent)],
+        foreground=[("selected", palette.accent_fg)],
+    )
+    style.configure(
+        "Vault.Treeview.Heading",
+        background=palette.bg_surface,
+        foreground=palette.text_secondary,
+        bordercolor=palette.border,
+        lightcolor=palette.bg_surface,
+        darkcolor=palette.bg_surface,
+        borderwidth=1,
+        relief="flat",
+        font=fonts.caption_bold,
+        padding=(_p(6), _p(3)),
+    )
+    style.map(
+        "Vault.Treeview.Heading",
+        background=[("active", palette.bg_elevated)],
     )

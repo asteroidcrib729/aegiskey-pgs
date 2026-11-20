@@ -74,8 +74,8 @@ def test_main_window_lifecycle_interactions_and_error_handling(tmp_path: Path) -
         initial_secret = window._secret_var.get()
         assert len(initial_secret) == 24
         assert window._vault.count >= 1
-        assert len(window._batch_items) == 5
-        assert window._strength_meter._meter_image is not None
+        assert len(window._batch_items) == 4
+        assert len(window._strength_meter.find_all()) == 6
 
         # Switch through every generation mode and verify output
         window.switch_mode(GenerationMode.PASSPHRASE)
@@ -112,9 +112,18 @@ def test_main_window_lifecycle_interactions_and_error_handling(tmp_path: Path) -
         assert window._error_var.get() == ""
 
         window.generate_batch_candidates()
-        assert len(window._batch_items) == 5
+        assert len(window._batch_items) == 4
         window._copy_and_load_batch(window._batch_items[0])
         assert window._secret_var.get() == window._batch_items[0].value
+
+        # Verify SessionVaultPanel TouchpadScroll & MouseWheel handlers return cleanly
+        for _ in range(8):
+            window.generate_current()
+        assert window._vault.count >= 6
+        fake_tp = cast(Any, SimpleNamespace(delta=0xFFE4))
+        assert window._vault_panel._on_touchpad_scroll(fake_tp) == "break"
+        fake_mw = cast(Any, SimpleNamespace(delta=-120))
+        assert window._vault_panel._on_mousewheel(fake_mw) == "break"
 
         window.clear_clipboard_now()
         window.toggle_mask()
@@ -150,6 +159,25 @@ def test_window_present_and_resize_cycle(tmp_path: Path) -> None:
         root.geometry("1220x780")
         root.update()
         assert window._audit_notes_label.cget("wraplength") >= 200
+
+        # Populate vault above viewport height and verify TouchpadScroll moves Treeview yview
+        for _ in range(15):
+            window.generate_current()
+        root.update()
+        initial_y = window._vault_panel.tree.yview()[0]
+        fake_tp_down = cast(Any, SimpleNamespace(delta=0xFFE4))
+        for _ in range(6):
+            assert window._vault_panel._on_touchpad_scroll(fake_tp_down) == "break"
+        root.update()
+        scrolled_y = window._vault_panel.tree.yview()[0]
+        assert scrolled_y > initial_y
+
+        fake_tp_up = cast(Any, SimpleNamespace(delta=0x001C))
+        for _ in range(6):
+            assert window._vault_panel._on_touchpad_scroll(fake_tp_up) == "break"
+        root.update()
+        assert window._vault_panel.tree.yview()[0] < scrolled_y
+
         window._on_close()
     finally:
         with suppress(tk.TclError):

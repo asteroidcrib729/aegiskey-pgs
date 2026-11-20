@@ -3,12 +3,13 @@
 import tkinter as tk
 from collections.abc import Callable
 from contextlib import suppress
+from tkinter import ttk
 
 from password_generator.ui.icons import render_svg
 from password_generator.ui.theme import ThemePalette
 
 
-class ToggleSwitch(tk.Label):
+class ToggleSwitch(ttk.Label):
     """Crisp anti-aliased pill toggle switch with keyboard support and theme adaptation."""
 
     def __init__(
@@ -30,13 +31,9 @@ class ToggleSwitch(tk.Label):
 
         super().__init__(
             master,
-            bg=palette.bg_surface,
-            highlightthickness=1,
-            highlightbackground=palette.bg_surface,
-            highlightcolor=palette.border_focus,
-            bd=0,
+            style="Card.TLabel",
             cursor="hand2",
-            takefocus=1,
+            takefocus=True,
         )
 
         self.bind("<Button-1>", self._on_toggle)
@@ -51,11 +48,7 @@ class ToggleSwitch(tk.Label):
     def set_palette(self, palette: ThemePalette) -> None:
         """Update surface colors and re-rasterize anti-aliased switch SVGs on theme change."""
         self._palette = palette
-        self.configure(
-            bg=palette.bg_surface,
-            highlightbackground=palette.bg_surface,
-            highlightcolor=palette.border_focus,
-        )
+        self.configure(style="Card.TLabel")
         self._rebuild_images()
         self._refresh_image()
 

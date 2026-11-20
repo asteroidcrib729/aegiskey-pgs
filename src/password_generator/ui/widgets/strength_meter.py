@@ -1,7 +1,6 @@
-"""Anti-aliased segmented SVG meter visualizing cryptographic strength with flicker-free resize."""
+"""Fast, flicker-free segmented meter visualizing cryptographic strength on HiDPI displays."""
 
 import tkinter as tk
-from contextlib import suppress
 
 from password_generator.core.models import SecurityTier, StrengthReport
 from password_generator.ui.theme import ThemePalette
@@ -9,8 +8,8 @@ from password_generator.ui.theme import ThemePalette
 _SEGMENTS: int = 6
 
 
-class StrengthMeterCanvas(tk.Label):
-    """Six-segment rounded cryptographic entropy gauge rendered crisply via Tk 9.0 SVG."""
+class StrengthMeterCanvas(tk.Canvas):
+    """Six-segment rounded cryptographic entropy gauge with synchronous zero-lag resize."""
 
     def __init__(
         self,
@@ -22,31 +21,29 @@ class StrengthMeterCanvas(tk.Label):
         self._scale = max(1.0, scale)
         self._palette = palette
         self._report: StrengthReport | None = None
-        self._meter_image: tk.PhotoImage | None = None
+        self._bar_h = max(8, round(8 * self._scale))
+        self._canvas_h = self._bar_h + max(2, round(2 * self._scale))
         self._last_width: int = 0
-        self._redraw_after_id: str | None = None
-        self._height_px = max(10, round(10 * self._scale))
 
         super().__init__(
             master,
+            height=self._canvas_h,
             bg=palette.bg_surface,
             bd=0,
             highlightthickness=0,
-            anchor="w",
         )
         self.bind("<Configure>", self._on_configure)
-        self.bind("<Destroy>", self._on_destroy)
 
     def set_palette(self, palette: ThemePalette) -> None:
-        """Apply updated theme colors and schedule a smooth repaint."""
+        """Apply updated theme colors and repaint segments immediately."""
         self._palette = palette
         self.configure(bg=palette.bg_surface)
-        self._schedule_redraw()
+        self._redraw()
 
     def update_report(self, report: StrengthReport) -> None:
         """Bind a new ``StrengthReport`` and repaint segments."""
         self._report = report
-        self._schedule_redraw()
+        self._redraw()
 
     def tier_color(self, tier: SecurityTier) -> str:
         """Return the semantic accent color representing ``tier``."""
@@ -73,22 +70,17 @@ class StrengthMeterCanvas(tk.Label):
         return tier_map[report.tier]
 
     def _on_configure(self, event: tk.Event[tk.Misc]) -> None:
-        new_w = event.width
-        if new_w > 20 and new_w != self._last_width:
-            self._last_width = new_w
-            self._schedule_redraw()
-
-    def _schedule_redraw(self) -> None:
-        if self._redraw_after_id is None:
-            self._redraw_after_id = self.after_idle(self._redraw)
+        if event.width > 20 and event.width != self._last_width:
+            self._last_width = event.width
+            self._redraw()
 
     def _redraw(self) -> None:
-        self._redraw_after_id = None
+        self.delete("all")
         width = max(self._last_width, self.winfo_width(), round(360 * self._scale))
-        height = self._height_px
         gap = max(4, round(6 * self._scale))
-        seg_w = max(10.0, (width - gap * (_SEGMENTS - 1)) / _SEGMENTS)
-        rx = min(height / 2.0, 4.0 * self._scale)
+        seg_w = max(14.0, (width - gap * (_SEGMENTS - 1)) / _SEGMENTS)
+        cy = self._canvas_h / 2.0
+        cap_r = self._bar_h / 2.0
 
         active = self._active_segments(self._report)
         active_color = (
@@ -97,26 +89,16 @@ class StrengthMeterCanvas(tk.Label):
             else self._palette.switch_off
         )
 
-        rects: list[str] = []
         for idx in range(_SEGMENTS):
-            x0 = idx * (seg_w + gap)
+            x0 = idx * (seg_w + gap) + cap_r
+            x1 = max(x0 + 1.0, idx * (seg_w + gap) + seg_w - cap_r)
             fill = active_color if idx < active else self._palette.switch_off
-            rects.append(
-                f'<rect x="{x0:.2f}" y="0" width="{seg_w:.2f}" height="{height}" '
-                f'rx="{rx:.2f}" fill="{fill}"/>'
+            self.create_line(
+                x0,
+                cy,
+                x1,
+                cy,
+                width=self._bar_h,
+                capstyle=tk.ROUND,
+                fill=fill,
             )
-
-        svg = (
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
-            f'viewBox="0 0 {width} {height}">{"".join(rects)}</svg>'
-        )
-        self._meter_image = tk.PhotoImage(data=svg, format="svg")
-        self.configure(image=self._meter_image)
-
-    def _on_destroy(self, event: tk.Event[tk.Misc]) -> None:
-        if event.widget is self:
-            if self._redraw_after_id is not None:
-                with suppress(tk.TclError):
-                    self.after_cancel(self._redraw_after_id)
-                self._redraw_after_id = None
-            self._meter_image = None

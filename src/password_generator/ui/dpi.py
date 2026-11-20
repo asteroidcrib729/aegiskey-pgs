@@ -1,12 +1,30 @@
-"""Windows Per-Monitor DPI awareness, Tk scaling synchronization, and native dark titlebar."""
+"""Windows Per-Monitor DPI awareness, Tk scaling synchronization, and native DWM polish."""
 
 import ctypes
 import sys
 import tkinter as tk
+from collections.abc import Callable
 from contextlib import suppress
+from ctypes import wintypes
 
 _DEFAULT_DPI: float = 96.0
 _DWMWA_USE_IMMERSIVE_DARK_MODE: int = 20
+_GCLP_HBRBACKGROUND: int = -10
+_GWL_EXSTYLE: int = -20
+_WS_EX_LAYERED: int = 0x00080000
+_SWP_NOSIZE: int = 0x0001
+_SWP_NOMOVE: int = 0x0002
+_SWP_NOZORDER: int = 0x0004
+_SWP_NOACTIVATE: int = 0x0010
+_SWP_FRAMECHANGED: int = 0x0020
+_WM_SETREDRAW: int = 0x000B
+_RDW_INVALIDATE: int = 0x0001
+_RDW_ERASE: int = 0x0004
+_RDW_ALLCHILDREN: int = 0x0080
+_RDW_UPDATENOW: int = 0x0100
+_RDW_FRAME: int = 0x0400
+
+_ACTIVE_BRUSHES: dict[int, int] = {}
 
 
 def enable_high_dpi_awareness() -> None:
@@ -60,9 +78,34 @@ def configure_tk_scaling(root: tk.Misc) -> float:
     return max(1.0, dpi / _DEFAULT_DPI)
 
 
-def apply_windows_titlebar_theme(window: tk.Wm, *, dark: bool) -> None:
-    """Ask Windows DWM to render an immersive dark or light native titlebar."""
-    if sys.platform != "win32":
+def _resolve_outer_hwnd(window: tk.Misc) -> int:
+    windll = getattr(ctypes, "windll", None)
+    if windll is None:
+        return 0
+    target_id = window.winfo_id()
+    parent_hwnd = int(windll.user32.GetParent(target_id))
+    return parent_hwnd or target_id
+
+
+def _hex_to_colorref(hex_color: str) -> int:
+    cleaned = hex_color.lstrip("#")
+    if len(cleaned) != 6:
+        return 0x00170E0A
+    r = int(cleaned[0:2], 16)
+    g = int(cleaned[2:4], 16)
+    b = int(cleaned[4:6], 16)
+    return (b << 16) | (g << 8) | r
+
+
+def apply_windows_surface_polish(
+    window: tk.Wm,
+    *,
+    bg_hex: str,
+    child_bg_hex: str | None = None,
+    dark: bool,
+) -> None:
+    """Configure DWM titlebar and class background brushes to prevent white erase flashes."""
+    if sys.platform != "win32" or not isinstance(window, tk.Misc):
         return
 
     windll = getattr(ctypes, "windll", None)
@@ -70,15 +113,113 @@ def apply_windows_titlebar_theme(window: tk.Wm, *, dark: bool) -> None:
         return
 
     with suppress(AttributeError, OSError, tk.TclError, ValueError):
-        if isinstance(window, tk.Misc):
-            window.update_idletasks()
-            target_id = window.winfo_id()
-            # For top-level Tk windows on Windows, GetParent resolves the outer frame HWND.
-            hwnd = int(windll.user32.GetParent(target_id)) or target_id
-            value = ctypes.c_int(1 if dark else 0)
-            windll.dwmapi.DwmSetWindowAttribute(
-                ctypes.c_void_p(hwnd),
-                ctypes.c_uint(_DWMWA_USE_IMMERSIVE_DARK_MODE),
-                ctypes.byref(value),
-                ctypes.sizeof(value),
+        window.update_idletasks()
+        inner_hwnd = window.winfo_id()
+        outer_hwnd = _resolve_outer_hwnd(window)
+
+        targets = [(outer_hwnd, bg_hex)]
+        if inner_hwnd and inner_hwnd != outer_hwnd:
+            targets.append((inner_hwnd, child_bg_hex or bg_hex))
+
+        create_brush = windll.gdi32.CreateSolidBrush
+        create_brush.argtypes = [wintypes.DWORD]
+        create_brush.restype = ctypes.c_void_p
+
+        delete_obj = windll.gdi32.DeleteObject
+        delete_obj.argtypes = [ctypes.c_void_p]
+        delete_obj.restype = ctypes.c_int
+
+        set_class_long = windll.user32.SetClassLongPtrW
+        set_class_long.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+        set_class_long.restype = ctypes.c_void_p
+
+        for hwnd, hex_val in targets:
+            colorref = _hex_to_colorref(hex_val)
+            old_brush = _ACTIVE_BRUSHES.pop(hwnd, 0)
+            new_brush = int(create_brush(colorref) or 0)
+            if new_brush:
+                set_class_long(hwnd, _GCLP_HBRBACKGROUND, new_brush)
+                _ACTIVE_BRUSHES[hwnd] = new_brush
+            if old_brush:
+                delete_obj(old_brush)
+
+        value = ctypes.c_int(1 if dark else 0)
+        windll.dwmapi.DwmSetWindowAttribute(
+            ctypes.c_void_p(outer_hwnd),
+            ctypes.c_uint(_DWMWA_USE_IMMERSIVE_DARK_MODE),
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+
+
+def strip_layered_window_flag(window: tk.Misc) -> None:
+    """Remove ``WS_EX_LAYERED`` after startup reveal so Win32 resize compositing stays native."""
+    if sys.platform != "win32":
+        return
+    windll = getattr(ctypes, "windll", None)
+    if windll is None:
+        return
+    with suppress(AttributeError, OSError, tk.TclError):
+        outer_hwnd = _resolve_outer_hwnd(window)
+        exstyle = int(windll.user32.GetWindowLongW(outer_hwnd, _GWL_EXSTYLE))
+        if exstyle & _WS_EX_LAYERED:
+            windll.user32.SetWindowLongW(
+                outer_hwnd,
+                _GWL_EXSTYLE,
+                exstyle & ~_WS_EX_LAYERED,
             )
+            windll.user32.SetWindowPos(
+                ctypes.c_void_p(outer_hwnd),
+                None,
+                0,
+                0,
+                0,
+                0,
+                _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_FRAMECHANGED,
+            )
+
+
+def atomic_resize_redraw(window: tk.Misc, layout_callback: Callable[[], None]) -> None:
+    """Suppress intermediate child repaints during layout, then paint atomically once."""
+    if sys.platform != "win32":
+        layout_callback()
+        return
+
+    windll = getattr(ctypes, "windll", None)
+    if windll is None:
+        layout_callback()
+        return
+
+    outer_hwnd = 0
+    with suppress(AttributeError, OSError, tk.TclError):
+        outer_hwnd = _resolve_outer_hwnd(window)
+
+    if not outer_hwnd:
+        layout_callback()
+        return
+
+    user32 = windll.user32
+    hwnd_ptr = ctypes.c_void_p(outer_hwnd)
+    user32.SendMessageW(hwnd_ptr, _WM_SETREDRAW, 0, 0)
+    try:
+        layout_callback()
+    finally:
+        user32.SendMessageW(hwnd_ptr, _WM_SETREDRAW, 1, 0)
+        flags = _RDW_INVALIDATE | _RDW_ERASE | _RDW_ALLCHILDREN | _RDW_UPDATENOW | _RDW_FRAME
+        user32.RedrawWindow(hwnd_ptr, None, None, ctypes.c_uint(flags))
+
+
+def release_window_brushes(window: tk.Misc) -> None:
+    """Clean up GDI solid brushes allocated for ``window`` on teardown."""
+    if sys.platform != "win32":
+        return
+    windll = getattr(ctypes, "windll", None)
+    if windll is None:
+        return
+    with suppress(AttributeError, OSError, tk.TclError):
+        inner_hwnd = window.winfo_id()
+        outer_hwnd = _resolve_outer_hwnd(window)
+        for hwnd in {outer_hwnd, inner_hwnd}:
+            brush = _ACTIVE_BRUSHES.pop(hwnd, 0)
+            if brush:
+                windll.gdi32.DeleteObject(ctypes.c_void_p(brush))
