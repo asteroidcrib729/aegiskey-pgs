@@ -1,0 +1,69 @@
+name: Security & Supply Chain
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+
+jobs:
+  codeql:
+    name: CodeQL Static Analysis (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          queries: +security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+
+  security-checks:
+    name: CSPRNG, Bandit Lint & Zero-Runtime-Dep Policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Sync locked environment
+        run: |
+          uv python install
+          uv lock --check
+          uv sync --locked --all-groups
+
+      - name: Run Bandit security rules via Ruff
+        run: uv run ruff check --select S .
+
+      - name: Enforce zero third-party runtime dependencies
+        run: |
+          uv run python -c "import tomllib, pathlib; deps = tomllib.loads(pathlib.Path('pyproject.toml').read_text('utf-8'))['project']['dependencies']; assert deps == [], f'Unexpected runtime deps: {deps}'; print('Verified zero runtime dependencies')"
+
+  dependency-review:
+    name: Dependency Review (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high

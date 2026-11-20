@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint-typecheck:
+    name: Lint, Format & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.14.7 & sync locked dependencies
+        run: |
+          uv python install
+          uv lock --check
+          uv sync --locked --all-groups
+
+      - name: Check formatting (Ruff)
+        run: uv run ruff format --check .
+
+      - name: Run linter & security checks (Ruff)
+        run: uv run ruff check .
+
+      - name: Run type validation (Pyrefly)
+        run: uv run pyrefly check
+
+  test:
+    name: Test Suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install Xvfb & X11 Tk dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb libx11-6 libxext6 libxrender1 libxt6 libfontconfig1 libxft2
+
+      - name: Install Python 3.14.7 & sync environment
+        run: |
+          uv python install
+          uv sync --locked --dev
+
+      - name: Run pytest (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          uv run pytest -v
+          uv run password-generator --version
+
+      - name: Run pytest under Xvfb (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a uv run pytest -v
+          uv run password-generator --version
+
+  windows-installers:
+    name: Build & Smoke-Test Windows Installers (EXE + MSIX)
+    needs: [lint-typecheck, test]
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.14.7 & packaging dependencies
+        run: |
+          uv python install
+          uv sync --locked --all-groups
+
+      - name: Ensure Inno Setup 6 is installed
+        shell: pwsh
+        run: |
+          $iscc = @(
+            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+            'C:\Program Files\Inno Setup 6\ISCC.exe'
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc -and -not (Get-Command ISCC.exe -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build Portable EXE, Setup EXE & Signed MSIX + Run Live Smoke Tests
+        shell: pwsh
+        run: |
+          uv run python -m installers.windows.build_windows `
+            --format all `
+            --require-setup `
+            --require-msix `
+            --smoke-test
+
+      - name: Verify MSIX signature & display checksums
+        shell: pwsh
+        run: |
+          Get-Content dist\windows\SHA256SUMS.txt
+          $msix = Get-ChildItem dist\windows\*.msix | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $msix.FullName
+          Write-Output "MSIX signature status: $($sig.Status) ($($sig.SignerCertificate.Subject))"
+          if ($sig.Status -eq 'NotSigned') {
+            throw "MSIX package is unsigned."
+          }
+
+      - name: Upload Windows Installer Artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: aegiskey-windows-installers
+          if-no-files-found: error
+          path: |
+            dist/windows/*.exe
+            dist/windows/*.msix
+            dist/windows/*.cer
+            dist/windows/SHA256SUMS.txt

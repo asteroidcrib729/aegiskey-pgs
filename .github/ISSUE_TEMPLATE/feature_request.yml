@@ -1,0 +1,17 @@
+name: Feature Request
+description: Propose a new generation mode, policy rule, audit heuristic, or platform installer.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem & Proposal
+      description: Describe the use case and desired behavior clearly.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security / Privacy Impact
+      description: Explain how this preserves zero-persistence and CSPRNG guarantees.

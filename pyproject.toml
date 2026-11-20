@@ -18,6 +18,9 @@ dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.5",
 ]
+packaging = [
+    "pyinstaller>=6.22.0",
+]
 
 [build-system]
 requires = ["hatchling>=1.27.0"]
@@ -29,7 +32,7 @@ packages = ["src/password_generator"]
 [tool.ruff]
 target-version = "py314"
 line-length = 100
-src = ["src", "tests"]
+src = ["src", "tests", "installers"]
 
 [tool.ruff.lint]
 select = [
@@ -53,6 +56,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S105", "S106", "ANN"]
+"installers/**/*.py" = ["S603"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -61,14 +65,13 @@ line-ending = "auto"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 addopts = "-q --basetemp=.pytest_cache/tmp"
 
 [tool.pyrefly]
-project-includes = ["src", "tests"]
+project-includes = ["src", "tests", "installers"]
 project-excludes = [".venv", "**/.venv/**"]
-search-path = ["src"]
+search-path = ["src", "."]
 python-version = "3.14.7"
-python-interpreter-path = ".venv/Scripts/python.exe"
 untyped-def-behavior = "check-and-infer-return-type"
 
