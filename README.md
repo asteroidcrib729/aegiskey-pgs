@@ -1,5 +1,10 @@
 # AegisKey · Secure Password Generator Studio (v2.0)
 
+[![CI](https://github.com/asteroidcrib729/aegiskey-pgs/actions/workflows/ci.yml/badge.svg)](https://github.com/asteroidcrib729/aegiskey-pgs/actions/workflows/ci.yml)
+[![Release Windows Installers](https://github.com/asteroidcrib729/aegiskey-pgs/actions/workflows/release-windows.yml/badge.svg)](https://github.com/asteroidcrib729/aegiskey-pgs/actions/workflows/release-windows.yml)
+[![Security & Supply Chain](https://github.com/asteroidcrib729/aegiskey-pgs/actions/workflows/security.yml/badge.svg)](https://github.com/asteroidcrib729/aegiskey-pgs/actions/workflows/security.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A modern, high-DPI Tkinter desktop workstation for generating and auditing cryptographically strong passwords, Diceware passphrases, developer API tokens, and hardened PINs — built with **Python 3.14.7**, **Astral `uv`**, **Ruff**, and **Pyrefly**.
 
 > Transformed from a single 2022 coursework Jupyter Notebook (`Project FA22 - Password Generator With GUI.ipynb`) into a modular, zero-dependency, security-hardened 2026 desktop application. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full 2022 → 2026 breakdown.
@@ -112,16 +117,15 @@ uv run python -m installers.windows.build_windows --format all --smoke-test
 
 ---
 
-## Publishing Checklist for GitHub
+## Releases & Repository Links
+
+- **GitHub Repository:** [asteroidcrib729/aegiskey-pgs](https://github.com/asteroidcrib729/aegiskey-pgs)
+- **Prebuilt Windows Installers (`.exe` & `.msix`):** [GitHub Releases](https://github.com/asteroidcrib729/aegiskey-pgs/releases)
 
 ```powershell
-# 1. Create an empty repository on GitHub, add the remote, and push main
-git remote add origin https://github.com/<owner>/<repo>.git
-git push -u origin main
-
-# 2. (Optional) Tag a release to automatically export EXE & MSIX installers to GitHub Releases
-git tag v2.0.0
-git push origin v2.0.0
+# Trigger a new automated Windows EXE & MSIX GitHub Release
+git tag v2.0.1
+git push origin v2.0.1
 ```
 
 ---
