@@ -6,6 +6,7 @@ import tkinter as tk
 from collections.abc import Callable
 from contextlib import suppress
 from ctypes import wintypes
+from typing import Any
 
 _DEFAULT_DPI: float = 96.0
 _DWMWA_USE_IMMERSIVE_DARK_MODE: int = 20
@@ -27,12 +28,16 @@ _RDW_FRAME: int = 0x0400
 _ACTIVE_BRUSHES: dict[int, int] = {}
 
 
+def _win_dll() -> Any:
+    """Return ``ctypes.windll`` on Windows, or ``None`` on non-Windows platforms."""
+    if sys.platform != "win32":
+        return None
+    return getattr(ctypes, "windll", None)
+
+
 def enable_high_dpi_awareness() -> None:
     """Enable Per-Monitor v2 DPI awareness on Windows before creating the Tk root window."""
-    if sys.platform != "win32":
-        return
-
-    windll = getattr(ctypes, "windll", None)
+    windll = _win_dll()
     if windll is None:
         return
 
@@ -53,14 +58,13 @@ def enable_high_dpi_awareness() -> None:
 
 def query_window_dpi(window: tk.Misc) -> float:
     """Return the active display DPI for ``window``, defaulting to 96.0 if unavailable."""
-    if sys.platform == "win32":
-        windll = getattr(ctypes, "windll", None)
-        if windll is not None:
-            with suppress(AttributeError, OSError, tk.TclError):
-                hwnd = window.winfo_id()
-                dpi = float(windll.user32.GetDpiForWindow(hwnd))
-                if dpi >= 72.0:
-                    return dpi
+    windll = _win_dll()
+    if windll is not None:
+        with suppress(AttributeError, OSError, tk.TclError):
+            hwnd = window.winfo_id()
+            dpi = float(windll.user32.GetDpiForWindow(hwnd))
+            if dpi >= 72.0:
+                return dpi
 
     with suppress(tk.TclError):
         measured = float(window.winfo_fpixels("1i"))
@@ -79,7 +83,7 @@ def configure_tk_scaling(root: tk.Misc) -> float:
 
 
 def _resolve_outer_hwnd(window: tk.Misc) -> int:
-    windll = getattr(ctypes, "windll", None)
+    windll = _win_dll()
     if windll is None:
         return 0
     target_id = window.winfo_id()
@@ -105,10 +109,10 @@ def apply_windows_surface_polish(
     dark: bool,
 ) -> None:
     """Configure DWM titlebar and class background brushes to prevent white erase flashes."""
-    if sys.platform != "win32" or not isinstance(window, tk.Misc):
+    if not isinstance(window, tk.Misc):
         return
 
-    windll = getattr(ctypes, "windll", None)
+    windll = _win_dll()
     if windll is None:
         return
 
@@ -154,9 +158,7 @@ def apply_windows_surface_polish(
 
 def strip_layered_window_flag(window: tk.Misc) -> None:
     """Remove ``WS_EX_LAYERED`` after startup reveal so Win32 resize compositing stays native."""
-    if sys.platform != "win32":
-        return
-    windll = getattr(ctypes, "windll", None)
+    windll = _win_dll()
     if windll is None:
         return
     with suppress(AttributeError, OSError, tk.TclError):
@@ -181,11 +183,7 @@ def strip_layered_window_flag(window: tk.Misc) -> None:
 
 def atomic_resize_redraw(window: tk.Misc, layout_callback: Callable[[], None]) -> None:
     """Suppress intermediate child repaints during layout, then paint atomically once."""
-    if sys.platform != "win32":
-        layout_callback()
-        return
-
-    windll = getattr(ctypes, "windll", None)
+    windll = _win_dll()
     if windll is None:
         layout_callback()
         return
@@ -211,9 +209,7 @@ def atomic_resize_redraw(window: tk.Misc, layout_callback: Callable[[], None]) -
 
 def release_window_brushes(window: tk.Misc) -> None:
     """Clean up GDI solid brushes allocated for ``window`` on teardown."""
-    if sys.platform != "win32":
-        return
-    windll = getattr(ctypes, "windll", None)
+    windll = _win_dll()
     if windll is None:
         return
     with suppress(AttributeError, OSError, tk.TclError):

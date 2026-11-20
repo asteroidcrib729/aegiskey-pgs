@@ -66,7 +66,7 @@ line-ending = "auto"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
-addopts = "-q --basetemp=.pytest_cache/tmp"
+addopts = "-q --basetemp=.pytest_tmp"
 
 [tool.pyrefly]
 project-includes = ["src", "tests", "installers"]

@@ -12,6 +12,7 @@ dist/
 # Tooling Caches
 .ruff_cache/
 .pytest_cache/
+.pytest_tmp/
 .pyrefly/
 .uv-cache/
 .coverage
