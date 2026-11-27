@@ -16,14 +16,14 @@ password-generator-gui = "password_generator.__main__:main"
 dev = [
     "pyrefly>=1.5.0",
     "pytest>=9.2.0",
-    "ruff>=0.17.5",
+    "ruff>=0.17.6",
 ]
 packaging = [
     "pyinstaller>=6.22.0",
 ]
 
 [build-system]
-requires = ["hatchling>=1.27.0"]
+requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
